@@ -917,20 +917,40 @@ function MarkedText({ text, blockIdx, hlMarkers, matchingMode, onMarkerAdd }) {
 }
 
 // ── 유형 코드 배지 ──
-function TypeBadge({ type }) {
+function TypeBadge({ type, onChangeType }) {
   if (!type) return null;
+  const [open, setOpen] = useState(false);
   // 카테고리별 라벨 & 색상
   const labelMap = {
     A: { label: "자막", bg: "rgba(34,197,94,0.15)", tx: "#22C55E" },
-    B: { label: "용어 설명", bg: "rgba(59,130,246,0.15)", tx: "#3B82F6" },
+    B: { label: "용어설명", bg: "rgba(59,130,246,0.15)", tx: "#3B82F6" },
     C: { label: "자료", bg: "rgba(249,115,22,0.15)", tx: "#F97316" },
     D: { label: "자막", bg: "rgba(34,197,94,0.15)", tx: "#22C55E" },
     E: { label: "자막", bg: "rgba(34,197,94,0.15)", tx: "#22C55E" },
   };
   const cat = type.charAt(0);
   const c = labelMap[cat] || { label: "자막", bg: "rgba(255,255,255,0.08)", tx: C.txM };
-  return <span style={{fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,
-    background:c.bg,color:c.tx,letterSpacing:"0.03em"}}>{c.label}</span>;
+  if (!onChangeType) {
+    return <span style={{fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,
+      background:c.bg,color:c.tx,letterSpacing:"0.03em"}}>{c.label}</span>;
+  }
+  return <span style={{position:"relative",display:"inline-block"}}>
+    <span onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,
+      background:c.bg,color:c.tx,letterSpacing:"0.03em",cursor:"pointer",
+      border:`1px solid ${c.tx}44`,userSelect:"none"}}>{c.label} ▾</span>
+    {open && <div style={{position:"absolute",top:"100%",left:0,marginTop:4,zIndex:999,
+      background:C.sf,border:`1px solid ${C.bd}`,borderRadius:6,boxShadow:`0 4px 16px ${C.shadow||"rgba(0,0,0,0.3)"}`,
+      overflow:"hidden",minWidth:80}}>
+      {[["A","자막"],["B","용어설명"],["C","자료"]].map(([k,l])=>{
+        const m = labelMap[k];
+        return <div key={k} onClick={e=>{e.stopPropagation();onChangeType(k);setOpen(false)}}
+          style={{padding:"6px 12px",fontSize:11,fontWeight:600,color:m.tx,cursor:"pointer",
+            background:cat===k?m.bg:"transparent",whiteSpace:"nowrap"}}
+          onMouseEnter={e=>e.currentTarget.style.background=m.bg}
+          onMouseLeave={e=>{if(cat!==k)e.currentTarget.style.background="transparent"}}>{l}</div>;
+      })}
+    </div>}
+  </span>;
 }
 
 function BlockView({ block, pos, side, active, onClick, bRef, showIndex }) {
@@ -1179,7 +1199,7 @@ function CorrectionRightBlock({ block, pos, active, onClick, bRef, correctedText
   </div>;
 }
 
-function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedText, onEdit, onRelocate }) {
+function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedText, onEdit, onRelocate, onChangeType }) {
   const bc = C.hBd, bg = C.hBg;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1260,7 +1280,7 @@ function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedTe
       <Badge name={item.speaker||"—"}/>
       <span style={{fontSize:11,color:active?bc:C.txD,fontFamily:"monospace",fontWeight:active?700:400}}>
         ⏱ {timeLabel}</span>
-      <TypeBadge type={item.type}/>
+      <TypeBadge type={item.type} onChangeType={onChangeType}/>
       {item._manual && <span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,
         background:"rgba(34,197,94,0.15)",color:"#22C55E"}}>수동</span>}
       <span style={{fontSize:10,color:C.txD,fontFamily:"monospace",marginLeft:"auto"}}>#{item.block_index}</span>
@@ -3022,7 +3042,9 @@ export default function App() {
                           color:canDown?C.txM:"transparent",cursor:canDown?"pointer":"default"}}>▼</button>
                     </div>}
                     <span style={{fontSize:11,color:mc?.border||typeColor,fontWeight:700,flexShrink:0}}>▶</span>
-                    <TypeBadge type={g.type}/>
+                    <TypeBadge type={g.type} onChangeType={(newCat)=>{
+                      setHl(prev => prev.map(h => h === g ? {...h, type: newCat + (g.type?.slice(1)||"1")} : h));
+                    }}/>
                     <div style={{flex:1,fontSize:13,fontWeight:500,color:mc?.border||typeColor,lineHeight:1.4,whiteSpace:"pre-line"}}>
                       {displaySubtitle}
                     </div>
@@ -3158,6 +3180,9 @@ export default function App() {
                     if (next[oldKey] !== undefined) { next[newKey] = next[oldKey]; delete next[oldKey]; }
                     return next;
                   });
+                }}
+                onChangeType={(newCat) => {
+                  setHl(prev => prev.map(h => h === g ? {...h, type: newCat + (g.type?.slice(1)||"1")} : h));
                 }}
               />
               </div>)}
