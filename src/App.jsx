@@ -1690,8 +1690,11 @@ function EditorialSummaryPanel({ summary, collapsed, onToggle }) {
       {summary.one_liner && <div style={{fontSize:17,fontWeight:700,color:C.tx,marginBottom:14,lineHeight:1.5}}>{summary.one_liner}</div>}
       {summary.key_points?.length > 0 && <div style={{marginBottom:14}}>
         <div style={{fontSize:13,fontWeight:700,color:C.txD,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>핵심 논점</div>
-        {summary.key_points.map((p,i) => <div key={i} style={{fontSize:15,color:C.txM,lineHeight:1.6,paddingLeft:12,
-          borderLeft:`3px solid ${C.ac}`,marginBottom:8}}>{p}</div>)}
+        {summary.key_points.map((p,i) => <div key={i} style={{fontSize:15,color:C.txM,lineHeight:1.6,
+          marginBottom:8,display:"flex",gap:8,alignItems:"flex-start"}}>
+          <span style={{flexShrink:0,fontSize:14,lineHeight:"1.5"}}>✅</span>
+          <span>{p}</span>
+        </div>)}
       </div>}
       {summary.notable_quotes?.length > 0 && <div style={{marginBottom:14}}>
         <div style={{fontSize:13,fontWeight:700,color:C.txD,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>핵심 발언</div>
