@@ -920,7 +920,10 @@ function MarkedText({ text, blockIdx, hlMarkers, matchingMode, onMarkerAdd }) {
 function TypeBadge({ type, onChangeType }) {
   if (!type) return null;
   const [open, setOpen] = useState(false);
-  // 카테고리별 라벨 & 색상
+  // 카테고리별 라벨 & 색상 — "자료"(C)는 편집자 수동 변경 시에만 적용
+  // AI 생성 type: A=핵심논지, B=용어설명, C=질문프레이밍, D=비교평가, E=기능헤드라인
+  // → A,C,D,E는 모두 "자막"으로 표시, B만 "용어설명"
+  // → 편집자가 TypeBadge 클릭→"자료" 선택 시에만 _userType="C"로 저장
   const labelMap = {
     A: { label: "자막", bg: "rgba(34,197,94,0.15)", tx: "#22C55E" },
     B: { label: "용어설명", bg: "rgba(59,130,246,0.15)", tx: "#3B82F6" },
@@ -929,7 +932,9 @@ function TypeBadge({ type, onChangeType }) {
     E: { label: "자막", bg: "rgba(34,197,94,0.15)", tx: "#22C55E" },
   };
   const cat = type.charAt(0);
-  const c = labelMap[cat] || { label: "자막", bg: "rgba(255,255,255,0.08)", tx: C.txM };
+  // AI 생성 C(질문 프레이밍)는 "자막"으로 표시, _userType이 "C"인 경우만 "자료"
+  const effectiveCat = (cat === "C" && !type.startsWith("C_user")) ? "A" : cat;
+  const c = labelMap[effectiveCat] || { label: "자막", bg: "rgba(255,255,255,0.08)", tx: C.txM };
   if (!onChangeType) {
     return <span style={{fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,
       background:c.bg,color:c.tx,letterSpacing:"0.03em"}}>{c.label}</span>;
@@ -941,13 +946,14 @@ function TypeBadge({ type, onChangeType }) {
     {open && <div style={{position:"absolute",top:"100%",left:0,marginTop:4,zIndex:999,
       background:C.sf,border:`1px solid ${C.bd}`,borderRadius:6,boxShadow:`0 4px 16px ${C.shadow||"rgba(0,0,0,0.3)"}`,
       overflow:"hidden",minWidth:80}}>
-      {[["A","자막"],["B","용어설명"],["C","자료"]].map(([k,l])=>{
-        const m = labelMap[k];
+      {[["A","자막"],["B","용어설명"],["C_user","자료"]].map(([k,l])=>{
+        const displayCat = k === "C_user" ? "C" : k;
+        const m = labelMap[displayCat] || labelMap["A"];
         return <div key={k} onClick={e=>{e.stopPropagation();onChangeType(k);setOpen(false)}}
           style={{padding:"6px 12px",fontSize:11,fontWeight:600,color:m.tx,cursor:"pointer",
-            background:cat===k?m.bg:"transparent",whiteSpace:"nowrap"}}
+            background:effectiveCat===displayCat?m.bg:"transparent",whiteSpace:"nowrap"}}
           onMouseEnter={e=>e.currentTarget.style.background=m.bg}
-          onMouseLeave={e=>{if(cat!==k)e.currentTarget.style.background="transparent"}}>{l}</div>;
+          onMouseLeave={e=>{if(effectiveCat!==displayCat)e.currentTarget.style.background="transparent"}}>{l}</div>;
       })}
     </div>}
   </span>;
@@ -3186,10 +3192,11 @@ export default function App() {
                   const markerColor = marker?.color;
                   const mc = markerColor ? MARKER_COLORS[markerColor] : null;
                   const isActiveMatch = matchingMode?.key === gKey;
-                  // 타입별 기본 색상
-                  const typeColor = g.type?.charAt(0) === "C" ? "#F97316" : g.type?.charAt(0) === "B" ? "#3B82F6" : "#22C55E";
-                  const typeBgLight = g.type?.charAt(0) === "C" ? "rgba(249,115,22,0.06)" : g.type?.charAt(0) === "B" ? "rgba(59,130,246,0.06)" : "rgba(34,197,94,0.06)";
-                  const typeBorder = g.type?.charAt(0) === "C" ? "rgba(249,115,22,0.3)" : g.type?.charAt(0) === "B" ? "rgba(59,130,246,0.3)" : "rgba(34,197,94,0.3)";
+                  // 타입별 기본 색상 — C_user만 자료(주황), AI 생성 C는 자막(초록)
+                  const isUserMaterial = g.type?.startsWith("C_user");
+                  const typeColor = isUserMaterial ? "#F97316" : g.type?.charAt(0) === "B" ? "#3B82F6" : "#22C55E";
+                  const typeBgLight = isUserMaterial ? "rgba(249,115,22,0.06)" : g.type?.charAt(0) === "B" ? "rgba(59,130,246,0.06)" : "rgba(34,197,94,0.06)";
+                  const typeBorder = isUserMaterial ? "rgba(249,115,22,0.3)" : g.type?.charAt(0) === "B" ? "rgba(59,130,246,0.3)" : "rgba(34,197,94,0.3)";
 
                   return <div key={`inline-${gi}`} style={{margin:"2px 16px 4px",padding:"8px 12px",borderRadius:8,
                     border:`1px solid ${mc ? mc.border : typeBorder}`,
@@ -3268,7 +3275,7 @@ export default function App() {
                 <div onClick={e=>e.stopPropagation()} style={{margin:"0 16px 10px",padding:12,borderRadius:10,
                   border:`1px solid ${C.hBd}`,background:"rgba(168,85,247,0.06)"}}>
                   <div style={{display:"flex",gap:6,marginBottom:8}}>
-                    {[["A1","강조자막"],["B2","용어 설명"],["C1","자료"]].map(([t,l])=>
+                    {[["A1","강조자막"],["B2","용어 설명"],["C_user1","자료"]].map(([t,l])=>
                       <button key={t} onClick={()=>setAddForm(f=>({...f,type:t}))}
                         style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:5,cursor:"pointer",
                           border:`1px solid ${addForm.type===t?C.hBd:"transparent"}`,
