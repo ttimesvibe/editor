@@ -782,14 +782,14 @@ const FN = "'Pretendard','Noto Sans KR',-apple-system,sans-serif";
 const MARKER_COLORS_DARK = {
   yellow: { bg: "rgba(251,191,36,0.3)", border: "#FBBF24", label: "노랑" },
   blue:   { bg: "rgba(59,130,246,0.3)", border: "#3B82F6", label: "파랑" },
-  green:  { bg: "rgba(34,197,94,0.3)",  border: "#22C55E", label: "초록" },
   red:    { bg: "rgba(239,68,68,0.3)",  border: "#EF4444", label: "빨강" },
+  green:  { bg: "rgba(34,197,94,0.3)",  border: "#22C55E", label: "초록" },
 };
 const MARKER_COLORS_LIGHT = {
   yellow: { bg: "rgba(251,191,36,0.22)", border: "#D97706", label: "노랑" },
   blue:   { bg: "rgba(59,130,246,0.22)", border: "#2563EB", label: "파랑" },
-  green:  { bg: "rgba(34,197,94,0.22)",  border: "#16A34A", label: "초록" },
   red:    { bg: "rgba(239,68,68,0.22)",  border: "#DC2626", label: "빨강" },
+  green:  { bg: "rgba(34,197,94,0.22)",  border: "#16A34A", label: "초록" },
 };
 let MARKER_COLORS = _savedTheme === "light" ? MARKER_COLORS_LIGHT : MARKER_COLORS_DARK;
 
