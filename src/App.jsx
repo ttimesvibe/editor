@@ -1199,7 +1199,7 @@ function CorrectionRightBlock({ block, pos, active, onClick, bRef, correctedText
   </div>;
 }
 
-function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedText, onEdit, onRelocate, onChangeType }) {
+function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedText, onEdit, onRelocate, onChangeType, onDelete }) {
   const bc = C.hBd, bg = C.hBg;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -1213,7 +1213,7 @@ function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedTe
 
   const verdictOptions = [
     { key: "use", label: "사용", color: "#22C55E", bg: "rgba(34,197,94,0.15)" },
-    { key: "discard", label: "폐기", color: "#EF4444", bg: "rgba(239,68,68,0.15)" },
+    { key: "discard", label: item._manual ? "삭제" : "폐기", color: "#EF4444", bg: "rgba(239,68,68,0.15)" },
   ];
   const currentVerdict = verdict || null;
   const hasEdit = editedText && editedText !== item.subtitle;
@@ -1248,13 +1248,16 @@ function GuideCard({ item, active, onClick, blocks, verdict, onVerdict, editedTe
 
   const handleVerdictClick = (e, vKey) => {
     e.stopPropagation();
+    if (vKey === "discard" && item._manual) {
+      // 수동 자막 → 완전 삭제
+      if (onDelete) onDelete(item);
+      return;
+    }
     if (vKey === "use" && currentVerdict !== "use") {
-      // "사용" 클릭 → 위치 선택 모드 진입
       setRelocTarget(item.block_index);
       setRelocating(true);
       onVerdict(item, "use");
     } else if (vKey === "use" && currentVerdict === "use") {
-      // 이미 "사용" → 토글 해제
       setRelocating(false);
       onVerdict(item, null);
     } else {
@@ -3154,7 +3157,16 @@ export default function App() {
                 active={aBlock===g.block_index}
                 onClick={g2=>scrollTo(g2.block_index)}
                 verdict={hlVerdicts[`${g.block_index}-${g.subtitle}`]}
-                onVerdict={(item, v) => setHlVerdicts(prev => ({...prev, [`${item.block_index}-${item.subtitle}`]: v}))}
+                onVerdict={(item, v) => {
+                  const key = `${item.block_index}-${item.subtitle}`;
+                  const prevVerdict = hlVerdicts[key];
+                  setHlVerdicts(prev => ({...prev, [key]: v}));
+                  // "사용" → 다른 상태로 변경 시 형광펜 제거
+                  if (prevVerdict === "use" && v !== "use") {
+                    setHlMarkers(prev => { const next = {...prev}; delete next[key]; return next; });
+                    if (matchingMode?.key === key) setMatchingMode(null);
+                  }
+                }}
                 editedText={hlEdits[`${g.block_index}-${g.subtitle}`]}
                 onEdit={(item, text) => setHlEdits(prev => {
                   const key = `${item.block_index}-${item.subtitle}`;
@@ -3183,6 +3195,14 @@ export default function App() {
                 }}
                 onChangeType={(newCat) => {
                   setHl(prev => prev.map(h => h === g ? {...h, type: newCat + (g.type?.slice(1)||"1")} : h));
+                }}
+                onDelete={(item) => {
+                  const key = `${item.block_index}-${item.subtitle}`;
+                  setHl(prev => prev.filter(h => h !== item));
+                  setHlVerdicts(prev => { const next = {...prev}; delete next[key]; return next; });
+                  setHlEdits(prev => { const next = {...prev}; delete next[key]; return next; });
+                  setHlMarkers(prev => { const next = {...prev}; delete next[key]; return next; });
+                  if (matchingMode?.key === key) setMatchingMode(null);
                 }}
               />
               </div>)}
