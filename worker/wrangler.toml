@@ -8,9 +8,7 @@ compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "KV_ID_여기에_입력"
-# ttimes-doctor KV 공유 시: b91de13be69045e59941b1ff000ffa0a
-# ttimes-edit 기존 KV 사용 시: 대시보드에서 확인
+id = "b4c4e3c3944146cb856b2622fff59473"   # ttimes-editor-sessions
 
 # Secrets (이미 설정됨, wrangler secret put 으로 변경 가능):
 # - OPENAI_API_KEY
