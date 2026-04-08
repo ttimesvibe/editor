@@ -2940,31 +2940,39 @@ export default function App() {
               return getCorrectedText(b.text, dm[idx]);
             });
 
-            // 블록(=화자 턴) 단위로 묶어서 청크 분할 — 화자 턴 중간에서 끊지 않음
-            const CHUNK_LIMIT = 2000;
+            // 블록 단위 유연 분할 (600~1000자, 블록 경계에서만 자름)
+            const CHUNK_MIN = 600;
+            const CHUNK_MAX = 1000;
             const chunks = [];
             let currentChunk = "";
-            let lastBlock = "";
             for (const blockText of allTexts) {
-              if (currentChunk.length + blockText.length + 1 > CHUNK_LIMIT && currentChunk.length > 0) {
+              const wouldBe = currentChunk.length + (currentChunk ? 1 : 0) + blockText.length;
+              if (currentChunk.length >= CHUNK_MIN && wouldBe > CHUNK_MAX) {
                 chunks.push(currentChunk);
-                // overlap: 이전 chunk 마지막 블록을 context로 포함
-                currentChunk = lastBlock + '\n' + blockText;
+                currentChunk = blockText;
               } else {
                 currentChunk += (currentChunk ? '\n' : '') + blockText;
               }
-              lastBlock = blockText;
             }
             if (currentChunk) chunks.push(currentChunk);
 
+            // 각 chunk 독립 호출 + 결과 검증
             const formattedChunks = [];
             for (let ci = 0; ci < chunks.length; ci++) {
               const pct = Math.round((ci / chunks.length) * 100);
               btn.textContent = `⏳ AI 포맷팅 중 (${pct}%)...`;
               const d = await apiCall("subtitle-format", { blocks: [{ index: ci, text: chunks[ci] }] }, cfg);
               const formatted = d.blocks || [];
-              formattedChunks.push(formatted[0]?.text || chunks[ci]);
-              if (ci < chunks.length - 1) await delay(1000);
+              const resultText = formatted[0]?.text || "";
+
+              // 검증: 출력이 입력의 30% 미만이면 원본 사용
+              if (resultText.length < chunks[ci].length * 0.3) {
+                console.warn(`[자막] chunk ${ci}: 출력 비정상 (${resultText.length}/${chunks[ci].length}자) — 원본 사용`);
+                formattedChunks.push(chunks[ci]);
+              } else {
+                formattedChunks.push(resultText);
+              }
+              if (ci < chunks.length - 1) await delay(500);
             }
 
             const aiText = formattedChunks.join('\n');

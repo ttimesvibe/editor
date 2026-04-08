@@ -983,15 +983,14 @@ async function handleSubtitleFormat(body, env, headers) {
     return new Response(JSON.stringify({ error: "blocks array is required" }), { status: 400, headers });
   }
 
-  // 프론트에서 이미 블록(화자 턴) 단위로 ~2000자 이하로 잘라서 보냄
-  // Worker는 재분할 없이 그대로 모델에 전달 (GPT-5.4-mini: 400K context, 128K output)
+  // 프론트에서 600~1000자 블록 경계 단위로 잘라서 보냄 — Worker는 통으로 모델에 전달
   const fullText = blocks.map(b => b.text).join('\n');
 
   const userMsg = `아래 텍스트를 자막용으로 포맷팅하세요. 줄바꿈과 구두점만 변경하고, 내용은 절대 수정하지 마세요.\n\n---\n${fullText}\n---`;
 
   const result = await callOpenAI(SUBTITLE_FORMAT_PROMPT, userMsg, env, {
     temperature: 0.1,
-    max_tokens: 16000,
+    max_tokens: 8000,
     model: "gpt-5.4-mini",
   });
 
