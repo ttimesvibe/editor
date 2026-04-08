@@ -1000,7 +1000,7 @@ async function handleSubtitleFormat(body, env, headers) {
         "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-5.1",
+        model: "gpt-5.4-mini",
         messages: [
           { role: "system", content: SUBTITLE_FORMAT_PROMPT },
           { role: "user", content: userMsg },
