@@ -2584,7 +2584,7 @@ export default function App() {
       borderBottom:`1px solid ${C.bd}`,background:C.sf,flexShrink:0}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <span style={{fontSize:18,fontWeight:800,letterSpacing:"-0.03em"}}>
-          <span style={{color:C.ac}}>T</span>Times Doctor
+          <span style={{color:C.ac}}>티타임즈</span> 편집 CMS
         </span>
         {fn && <span style={{fontSize:11,color:C.txD,padding:"2px 8px",background:"rgba(255,255,255,0.04)",borderRadius:4}}>{fn}</span>}
         <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,fontWeight:600,
