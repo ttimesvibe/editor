@@ -2566,12 +2566,27 @@ export default function App() {
       } catch (e) {
         console.warn("삭제선 파싱 실패, mammoth fallback:", e.message);
       }
-      // 삭제선 없으면 기존 mammoth 처리
+      // 삭제선 없어도 0차 원고검토로 이동 (mammoth 텍스트 추출 후)
       const res = await mammoth.extractRawText({arrayBuffer:buf});
-      handleFile(res.value, file.name);
+      const plainText = res.value;
+      const reviewBlocks = parseBlocks(plainText);
+      const duration = calcDuration(reviewBlocks);
+      const paragraphs = plainText.split('\n').map(line => [{ text: line, deleted: false }]);
+      setFn(file.name);
+      setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: plainText.length, paragraphs, cleanText: plainText });
+      setBlocks(reviewBlocks);
+      setTab("review");
+      setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
     } else {
       const text = await file.text();
-      handleFile(text, file.name);
+      const reviewBlocks = parseBlocks(text);
+      const duration = calcDuration(reviewBlocks);
+      const paragraphs = text.split('\n').map(line => [{ text: line, deleted: false }]);
+      setFn(file.name);
+      setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: text.length, paragraphs, cleanText: text });
+      setBlocks(reviewBlocks);
+      setTab("review");
+      setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
     }
   },[handleFile]);
 
@@ -2734,7 +2749,7 @@ export default function App() {
                   style={{padding:"9px 24px",borderRadius:8,border:"none",
                     background:`linear-gradient(135deg,${C.ac},#7C3AED)`,color:"#fff",fontSize:13,fontWeight:700,
                     cursor:"pointer",boxShadow:"0 4px 14px rgba(74,108,247,0.3)"}}>
-                  삭제선 제거 → 1차 교정 시작
+                  {reviewData.hasTrackChanges ? "삭제선 제거 → 1차 교정 시작" : "1차 교정 시작"}
                 </button>
               </div>
             </div>
@@ -2742,7 +2757,7 @@ export default function App() {
             <div style={{flex:1,overflowY:"auto"}}>
               <div style={{padding:"8px 16px",fontSize:11,fontWeight:700,color:C.txD,textTransform:"uppercase",
                 letterSpacing:"0.08em",borderBottom:`1px solid ${C.bd}`,position:"sticky",top:0,background:C.bg,zIndex:2}}>
-                원고 검토 — 취소선은 빨간색으로 표시됩니다
+                원고 검토{reviewData.hasTrackChanges ? " — 취소선은 빨간색으로 표시됩니다" : ""}
               </div>
               <div style={{padding:"16px 20px"}}>
                 {(reviewData.paragraphs || []).map((p, pi) => {
@@ -2797,14 +2812,32 @@ export default function App() {
             })}
           </div>
         </div>
-        <div style={{display:"flex",gap:20,padding:"10px 20px",background:C.sf,borderTop:`1px solid ${C.bd}`,fontSize:13,color:C.txM,flexShrink:0}}>
-          <span>필러: <b style={{color:C.fTx}}>{fC}</b></span>
-          <span>용어: <b style={{color:C.cTx}}>{tC}</b></span>
-          {sC > 0 && <span>맞춤법: <b style={{color:C.scTx}}>{sC}</b></span>}
-          <span>총: <b style={{color:C.tx}}>{fC+tC+sC}</b></span>
-          {Object.keys(scriptEdits).length > 0 && <span>수동 수정: <b style={{color:"#22C55E"}}>{Object.keys(scriptEdits).length}</b></span>}
-          {anal && <span style={{marginLeft:"auto",fontSize:11,color:C.txD}}>주제: {anal.overview?.topic?.substring(0,40)}</span>}
-        </div>
+        {(() => {
+          // 원문/수정본 분량 계산
+          const origChars = blocks.reduce((s, b) => s + b.text.replace(/\s/g, "").length, 0);
+          const corrChars = blocks.reduce((s, b) => {
+            const idx = b.index;
+            const t = scriptEdits[idx] !== undefined ? scriptEdits[idx] : getCorrectedText(b.text, dm[idx]);
+            return s + t.replace(/\s/g, "").length;
+          }, 0);
+          const origMs = Math.ceil(origChars / 200); // 원고지 매수 (200자 기준)
+          const corrMs = Math.ceil(corrChars / 200);
+          const diffChars = corrChars - origChars;
+          const diffSign = diffChars > 0 ? "+" : "";
+          return <div style={{display:"flex",gap:20,padding:"10px 20px",background:C.sf,borderTop:`1px solid ${C.bd}`,fontSize:13,color:C.txM,flexShrink:0,flexWrap:"wrap"}}>
+            <span>필러: <b style={{color:C.fTx}}>{fC}</b></span>
+            <span>용어: <b style={{color:C.cTx}}>{tC}</b></span>
+            {sC > 0 && <span>맞춤법: <b style={{color:C.scTx}}>{sC}</b></span>}
+            <span>총: <b style={{color:C.tx}}>{fC+tC+sC}</b></span>
+            {Object.keys(scriptEdits).length > 0 && <span>수동 수정: <b style={{color:"#22C55E"}}>{Object.keys(scriptEdits).length}</b></span>}
+            <span style={{marginLeft:"auto",borderLeft:`1px solid ${C.bd}`,paddingLeft:16,fontSize:12}}>
+              원문 <b style={{color:C.tx}}>{origChars.toLocaleString()}</b>자 ({origMs}매)
+              <span style={{margin:"0 6px",color:C.bd}}>→</span>
+              수정본 <b style={{color:"#22C55E"}}>{corrChars.toLocaleString()}</b>자 ({corrMs}매)
+              <span style={{marginLeft:8,color:diffChars<0?"#22C55E":"#F59E0B",fontSize:11}}>({diffSign}{diffChars.toLocaleString()}자)</span>
+            </span>
+          </div>;
+        })()}
       </>}
 
       {/* 1.5단계: 스크립트 편집 */}
