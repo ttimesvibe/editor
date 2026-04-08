@@ -987,52 +987,136 @@ async function handleSubtitleFormat(body, env, headers) {
     return new Response(JSON.stringify({ error: "blocks array is required" }), { status: 400, headers });
   }
 
-  // 프론트에서 600~1000자 블록 경계 단위로 잘라서 보냄 — Worker는 통으로 모델에 전달
   const fullText = blocks.map(b => b.text).join('\n');
-
   const userMsg = `아래 텍스트를 자막용으로 포맷팅하세요. 줄바꿈과 구두점만 변경하고, 내용은 절대 수정하지 마세요.\n\n---\n${fullText}\n---`;
 
-  const result = await callOpenAI(SUBTITLE_FORMAT_PROMPT, userMsg, env, {
-    temperature: 0.1,
-    max_tokens: 8000,
-    model: "gpt-5.4-mini",
-    useJsonFormat: false,
-  });
-
-  // 디버그 정보 수집
-  const _debug = {
-    contentType: result.content ? typeof result.content : null,
-    contentKeys: result.content && typeof result.content === "object" ? Object.keys(result.content) : null,
-    contentPreview: result.content ? JSON.stringify(result.content).substring(0, 500) : null,
-    finishReason: result.finish_reason || null,
-    inputLength: fullText.length,
-    outputLength: null,
-    error: result.error || null,
-  };
-
-  if (result.error) {
-    return new Response(JSON.stringify({ error: result.error, _debug }), {
-      status: result.status || 500, headers
+  // ── OpenAI API 직접 호출 (callOpenAI 미사용) ──
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4-mini",
+        messages: [
+          { role: "system", content: SUBTITLE_FORMAT_PROMPT },
+          { role: "user", content: userMsg },
+        ],
+        temperature: 0.1,
+        max_completion_tokens: 8000,
+      }),
     });
+  } catch (netErr) {
+    return new Response(JSON.stringify({
+      error: `Network error: ${netErr.message}`,
+      _debug: { inputLength: fullText.length, error: netErr.message },
+    }), { status: 502, headers });
   }
 
-  // JSON 응답에서 blocks[0].text 추출
-  const formatted = result.content?.blocks;
-  let finalText;
-  if (formatted && formatted.length > 0) {
-    finalText = formatted[0].text;
-  } else if (result.content?.text) {
-    finalText = result.content.text;
-  } else {
-    finalText = fullText; // fallback: 원본 그대로
+  if (response.status === 429) {
+    return new Response(JSON.stringify({
+      error: "Rate limited. Please wait and retry.",
+      _debug: { inputLength: fullText.length, error: "429 rate limited" },
+    }), { status: 429, headers });
   }
 
-  _debug.outputLength = finalText.length;
+  if (!response.ok) {
+    const errText = await response.text();
+    return new Response(JSON.stringify({
+      error: `OpenAI API error ${response.status}: ${errText}`,
+      _debug: { inputLength: fullText.length, error: errText.substring(0, 500) },
+    }), { status: response.status, headers });
+  }
+
+  const data = await response.json();
+  const finishReason = data.choices?.[0]?.finish_reason;
+  const rawContent = data.choices?.[0]?.message?.content || "";
+
+  if (finishReason === "length") {
+    return new Response(JSON.stringify({
+      error: `출력 토큰 한계 초과 (finish_reason: length). 입력을 더 작게 분할해주세요.`,
+      _debug: { inputLength: fullText.length, finishReason, rawLength: rawContent.length, rawPreview: rawContent.substring(0, 300) },
+    }), { status: 413, headers });
+  }
+
+  if (!rawContent) {
+    return new Response(JSON.stringify({
+      error: `Empty response from OpenAI. finish_reason: ${finishReason}. Model: ${data.model}`,
+      _debug: { inputLength: fullText.length, finishReason, rawLength: 0 },
+    }), { status: 500, headers });
+  }
+
+  // ── 3단계 fallback 파싱 ──
+  let finalText = null;
+  let parseMethod = null;
+
+  // 1단계: JSON 파싱 — { } 사이 추출 → blocks[0].text
+  try {
+    const braceStart = rawContent.indexOf('{');
+    const braceEnd = rawContent.lastIndexOf('}');
+    if (braceStart !== -1 && braceEnd > braceStart) {
+      const jsonStr = rawContent.substring(braceStart, braceEnd + 1);
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.blocks && parsed.blocks.length > 0 && parsed.blocks[0].text) {
+        finalText = parsed.blocks[0].text;
+        parseMethod = "json";
+      } else if (parsed.text) {
+        finalText = parsed.text;
+        parseMethod = "json";
+      }
+    }
+  } catch (e) { /* JSON 파싱 실패 → 2단계로 */ }
+
+  // 2단계: 정규식으로 "text" 값 추출
+  if (!finalText) {
+    try {
+      const textMatch = rawContent.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/s);
+      if (textMatch) {
+        finalText = JSON.parse('"' + textMatch[1] + '"'); // unescape
+        parseMethod = "regex";
+      }
+    } catch (e) { /* 정규식 실패 → 3단계로 */ }
+  }
+
+  // 3단계: raw 텍스트 사용 — 비콘텐츠 제거
+  if (!finalText) {
+    let cleaned = rawContent.trim();
+    // 코드펜스 제거
+    cleaned = cleaned.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '');
+    // 설명 문구 제거 (줄 단위)
+    cleaned = cleaned.split('\n').filter(line => {
+      const t = line.trim();
+      if (!t) return true;
+      if (/^(다음은|아래는|위 텍스트를|포맷팅 결과|Here is|Below is|The formatted)/i.test(t)) return false;
+      if (/^\{|\}$/.test(t)) return false;
+      if (/^"blocks"\s*:/.test(t) || /^"text"\s*:/.test(t) || /^"index"\s*:/.test(t)) return false;
+      return true;
+    }).join('\n').trim();
+    if (cleaned.length > 0) {
+      finalText = cleaned;
+      parseMethod = "rawText";
+    } else {
+      finalText = fullText; // 최종 fallback: 원본
+      parseMethod = "fallback";
+    }
+  }
+
+  const _debug = {
+    rawLength: rawContent.length,
+    parseMethod,
+    finishReason,
+    inputLength: fullText.length,
+    outputLength: finalText.length,
+    rawPreview: rawContent.substring(0, 300),
+  };
 
   return new Response(JSON.stringify({
     success: true,
     blocks: [{ index: 0, text: finalText }],
-    usage: result.usage || {},
+    usage: data.usage || {},
     _debug,
   }), { headers });
 }
