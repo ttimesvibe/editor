@@ -1061,7 +1061,7 @@ async function handleSubtitleFormat(body, env, headers) {
       const jsonStr = rawContent.substring(braceStart, braceEnd + 1);
       const parsed = JSON.parse(jsonStr);
       if (parsed.blocks && parsed.blocks.length > 0 && parsed.blocks[0].text) {
-        finalText = parsed.blocks[0].text;
+        finalText = parsed.blocks.map(b => b.text).join('\n');
         parseMethod = "json";
       } else if (parsed.text) {
         finalText = parsed.text;
