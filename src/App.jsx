@@ -8,7 +8,7 @@ import JSZip from "jszip";
 
 const DEFAULT_CONFIG = {
   apiMode: "live",
-  workerUrl: "https://ttimes-doctor.ttimes.workers.dev",
+  workerUrl: "https://ttimes-editor.ttimes.workers.dev",
   fillers: ["이제","또","좀","뭐","그냥","약간","진짜","되게","막","이렇게","저렇게"],
   customTerms: {},
   chunkSize: 8000,
@@ -1568,8 +1568,8 @@ function SettingsModal({ config, onSave, onClose }) {
       </div>
       {m==="live" && <div style={{marginBottom:16}}>
         <label style={{fontSize:12,color:C.txM,fontWeight:600,display:"block",marginBottom:6}}>Cloudflare Worker URL</label>
-        <input value={u} onChange={e=>setU(e.target.value)} placeholder="https://ttimes-doctor.xxx.workers.dev" style={iS}/>
-        <div style={{fontSize:11,color:C.txD,marginTop:4}}>ttimes-doctor Worker의 전체 URL</div>
+        <input value={u} onChange={e=>setU(e.target.value)} placeholder="https://ttimes-editor.xxx.workers.dev" style={iS}/>
+        <div style={{fontSize:11,color:C.txD,marginTop:4}}>ttimes-editor Worker의 전체 URL</div>
       </div>}
       <div style={{marginBottom:16}}>
         <label style={{fontSize:12,color:C.txM,fontWeight:600,display:"block",marginBottom:6}}>필러 단어 (쉼표 구분)</label>
