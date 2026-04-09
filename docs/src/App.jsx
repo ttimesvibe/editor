@@ -16,22 +16,22 @@ const DEFAULT_CONFIG = {
 };
 
 function loadConfig() {
-  try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem("td_cfg") || "{}") }; }
+  try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem("te_cfg") || "{}") }; }
   catch { return { ...DEFAULT_CONFIG }; }
 }
-function saveConfig(c) { localStorage.setItem("td_cfg", JSON.stringify(c)); }
+function saveConfig(c) { localStorage.setItem("te_cfg", JSON.stringify(c)); }
 
 // ═══════════════════════════════════════════════
 // TERM DICTIONARY — 팀 공유 단어장 (Worker KV + localStorage 캐시)
 // ═══════════════════════════════════════════════
 
 function loadDictionary() {
-  try { return JSON.parse(localStorage.getItem("td_dict") || "[]"); }
+  try { return JSON.parse(localStorage.getItem("te_dict") || "[]"); }
   catch { return []; }
 }
 
 function saveDictionary(terms) {
-  localStorage.setItem("td_dict", JSON.stringify(terms));
+  localStorage.setItem("te_dict", JSON.stringify(terms));
 }
 
 // Worker에서 팀 공유 단어장 불러오기 → localStorage 캐시 갱신
@@ -1958,7 +1958,7 @@ export default function App() {
   useEffect(() => {
     if (blocks.length === 0) return;
     try {
-      localStorage.setItem("td_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, tab, gReady, bookmark }));
+      localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, tab, gReady, bookmark }));
     } catch {}
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, tab, gReady, bookmark]);
 
@@ -1987,7 +1987,7 @@ export default function App() {
         .finally(() => setBusy(false));
     } else {
       try {
-        const saved = localStorage.getItem("td_session");
+        const saved = localStorage.getItem("te_session");
         if (saved) {
           const s = JSON.parse(saved);
           if (s.blocks?.length > 0) {
@@ -2143,7 +2143,7 @@ export default function App() {
 
   // 새 파일 시작
   const handleReset = useCallback(() => {
-    localStorage.removeItem("td_session");
+    localStorage.removeItem("te_session");
     if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
     setAutoSaveStatus(""); setLastSavedSnapshot("");
     setBlocks([]); setAnal(null); setDiffs([]); setHl([]); setHlStats(null); setHlVerdicts({}); setHlEdits({}); setHlMarkers({}); setScriptEdits({}); setReviewData(null);
