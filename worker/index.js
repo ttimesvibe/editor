@@ -1149,16 +1149,19 @@ function fixQuotesV2(lines) {
 }
 
 // ═══════════════════════════════════════
-// handleSubtitleFormat — V2.1
+// handleSubtitleFormat — V2.2
 // ═══════════════════════════════════════
 
 async function handleSubtitleFormat(body, env, headers) {
-  const { blocks } = body;
-  if (!blocks || !Array.isArray(blocks) || blocks.length === 0) {
-    return new Response(JSON.stringify({ error: "blocks array is required" }), { status: 400, headers });
+  // V2.2: { text, version: "v2" } 또는 V1 호환: { blocks: [...] }
+  let fullText;
+  if (body.text && body.version === "v2") {
+    fullText = body.text;
+  } else if (body.blocks && Array.isArray(body.blocks) && body.blocks.length > 0) {
+    fullText = body.blocks.map(b => b.text).join('\n');
+  } else {
+    return new Response(JSON.stringify({ error: "text or blocks required" }), { status: 400, headers });
   }
-
-  const fullText = blocks.map(b => b.text).join('\n');
 
   // ── 전처리: 메타 제거 + 어절 번호 부여 + 청크 분할 ──
   const { words } = preprocessForV2(fullText);
@@ -1269,7 +1272,7 @@ async function handleSubtitleFormat(body, env, headers) {
   const finalText = postProcessSubtitleV2(words, allBreaksAfter);
 
   const _debug = {
-    version: "v2.1",
+    version: "v2.2",
     inputLength: fullText.length,
     wordCount: words.length,
     chunkCount: wordChunks.length,
@@ -1281,7 +1284,7 @@ async function handleSubtitleFormat(body, env, headers) {
 
   return new Response(JSON.stringify({
     success: true,
-    blocks: [{ index: 0, text: finalText }],
+    formatted: finalText,
     _debug,
   }), { headers });
 }
