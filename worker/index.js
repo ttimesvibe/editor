@@ -1153,6 +1153,8 @@ function fixQuotesV2(lines) {
 // ═══════════════════════════════════════
 
 async function handleSubtitleFormat(body, env, headers) {
+  console.log("[subtitle-format] 요청 수신:", JSON.stringify({ hasText: !!body.text, version: body.version, hasBlocks: !!body.blocks, textLen: body.text?.length }));
+  
   // V2.2: { text, version: "v2" } 또는 V1 호환: { blocks: [...] }
   let fullText;
   if (body.text && body.version === "v2") {
@@ -1166,12 +1168,15 @@ async function handleSubtitleFormat(body, env, headers) {
   // ── 전처리: 메타 제거 + 어절 번호 부여 + 청크 분할 ──
   const { words } = preprocessForV2(fullText);
   const wordChunks = chunkWords(words);
+  console.log(`[subtitle-format] 전처리 완료: ${words.length}어절 → ${wordChunks.length}청크`);
 
   // ── 각 청크별 모델 호출 ──
   let allBreaksAfter = [];
   const chunkDebug = [];
 
-  for (const chunk of wordChunks) {
+  for (let ci = 0; ci < wordChunks.length; ci++) {
+    const chunk = wordChunks[ci];
+    console.log(`[subtitle-format] 청크 ${ci+1}/${wordChunks.length} 호출 시작 (${chunk.words.length}어절)`);
     let response;
     try {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1218,12 +1223,14 @@ async function handleSubtitleFormat(body, env, headers) {
     }
 
     if (!response.ok) {
+      console.log(`[subtitle-format] 청크 ${ci+1} 에러: HTTP ${response.status}`);
       chunkDebug.push({ error: `HTTP ${response.status}` });
       continue;
     }
 
     const data = await response.json();
     const rawContent = data.choices?.[0]?.message?.content || "";
+    console.log(`[subtitle-format] 청크 ${ci+1} 응답: ${rawContent.length}자, finish=${data.choices?.[0]?.finish_reason}`);
     let breaksAfter = null;
 
     try {
