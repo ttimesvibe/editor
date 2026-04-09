@@ -1017,9 +1017,9 @@ const V2_HARD_MAX = 30;
 const PARTICLES = /^(은|는|이|가|을|를|의|에|에서|으로|로|와|과|도|만|까지|부터|에게|한테|께|라고|이라고|처럼|보다|밖에|마저|조차|이나|나|요|죠)$/;
 const AUX_VERBS = /^(있(고|는데|으니까|잖아요|어요|습니다|었고|지만|거든요|으면)|없(고|는데|잖아요|어요|습니다|지만|거든요)|않(고|는데|잖아요|아요|습니다|지만|거든요)|하고|되고|되는|되면|봤는데|보니까|줘야|줘서|줬고|주고|드리고)$/;
 
-function postProcessSubtitleV2(words, breaksAfter) {
+async function postProcessSubtitleV2(words, breaksAfter, env) {
   let lines = buildLinesV2(words, breaksAfter);
-  lines = splitLongLines(lines);
+  lines = await validateAndResplit(lines, env);
   lines = mergeShortLines(lines);
   lines = removeTrailingPunctuation(lines);
   lines = fixQuotesV2(lines);
@@ -1041,88 +1041,99 @@ function buildLinesV2(words, breaksAfter) {
   return lines;
 }
 
-function splitLongLines(lines) {
-  const result = [];
-  for (const line of lines) {
-    if (line.text.length <= V2_MAX_CHARS) { result.push(line); continue; }
-    const splits = findSplitPoints(line.words);
-    if (splits.length === 0) { result.push(line); continue; }
-    let startIdx = 0;
-    for (const splitIdx of splits) {
-      const chunk = line.words.slice(startIdx, splitIdx + 1);
-      result.push({ text: chunk.join(' '), words: chunk });
-      startIdx = splitIdx + 1;
-    }
-    if (startIdx < line.words.length) {
-      const chunk = line.words.slice(startIdx);
-      result.push({ text: chunk.join(' '), words: chunk });
+// 변경 5: 글자 수 위반 줄만 모델에게 재질의 (코드 기반 자동 분할 제거)
+async function validateAndResplit(lines, env) {
+  const violations = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].text.length > V2_MAX_CHARS) {
+      violations.push(i);
     }
   }
-  return result;
-}
 
-function findSplitPoints(words) {
-  const text = words.join(' ');
-  if (text.length <= V2_MAX_CHARS) return [];
-  const points = [];
-  let charCount = 0;
-  let lastSafeBreak = -1;
-  for (let i = 0; i < words.length - 1; i++) {
-    charCount += words[i].length + (i > 0 ? 1 : 0);
-    if (i + 1 < words.length && isBoundToNext(words[i], words[i + 1])) continue;
-    lastSafeBreak = i;
-    if (charCount >= 14 && charCount <= V2_MAX_CHARS) {
-      const nextCharCount = charCount + 1 + (words[i + 1]?.length || 0);
-      if (nextCharCount > V2_MAX_CHARS) {
-        points.push(i);
-        const remaining = words.slice(i + 1);
-        if (remaining.join(' ').length > V2_MAX_CHARS) {
-          const subPoints = findSplitPoints(remaining);
-          for (const sp of subPoints) points.push(sp + i + 1);
-        }
-        return points;
+  if (violations.length === 0) return lines;
+
+  // 위반 줄 ± 앞뒤 1줄을 추출해서 모델에 재질의
+  const processed = [...lines];
+  // 뒤에서부터 처리 (splice 인덱스 안 밀리게)
+  for (let vi = violations.length - 1; vi >= 0; vi--) {
+    const idx = violations[vi];
+    const start = Math.max(0, idx - 1);
+    const end = Math.min(processed.length - 1, idx + 1);
+    const contextLines = processed.slice(start, end + 1);
+    const contextWords = contextLines.flatMap(l => l.words);
+    const numbered = contextWords.map((w, i) => `[${i + 1}]${w}`).join(' ');
+
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: "gpt-5.4-mini",
+          messages: [
+            { role: "system", content: SUBTITLE_FORMAT_PROMPT },
+            { role: "user", content: numbered },
+          ],
+          temperature: 0.1,
+          max_completion_tokens: 500,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const rawContent = data.choices?.[0]?.message?.content || "";
+        try {
+          const parsed = JSON.parse(rawContent.substring(rawContent.indexOf('{'), rawContent.lastIndexOf('}') + 1));
+          if (Array.isArray(parsed.breaks_after)) {
+            const newBreaks = parsed.breaks_after.filter(n => typeof n === 'number' && n >= 1 && n < contextWords.length);
+            const newLines = buildLinesV2(contextWords, newBreaks);
+            processed.splice(start, end - start + 1, ...newLines);
+          }
+        } catch (e) { /* 파싱 실패 시 원본 유지 */ }
       }
-    }
-    if (charCount > V2_HARD_MAX && lastSafeBreak >= 0) {
-      points.push(lastSafeBreak);
-      const remaining = words.slice(lastSafeBreak + 1);
-      if (remaining.join(' ').length > V2_MAX_CHARS) {
-        const subPoints = findSplitPoints(remaining);
-        for (const sp of subPoints) points.push(sp + lastSafeBreak + 1);
-      }
-      return points;
-    }
+    } catch (e) { /* 네트워크 에러 시 원본 유지 */ }
   }
-  if (lastSafeBreak >= 0 && lastSafeBreak < words.length - 1) points.push(lastSafeBreak);
-  return points;
+
+  return processed;
 }
 
-function isBoundToNext(current, next) {
-  if (PARTICLES.test(next)) return true;
-  if (AUX_VERBS.test(next)) return true;
-  return false;
-}
-
+// 변경 6: 양방향 병합 강화 — 앞줄 우선 + 1어절/MIN_CHARS 통합 조건
 function mergeShortLines(lines) {
   const result = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.words.length === 1 && i + 1 < lines.length) {
-      const merged = line.text + ' ' + lines[i + 1].text;
-      if (merged.length <= V2_MAX_CHARS) {
-        result.push({ text: merged, words: [...line.words, ...lines[i + 1].words] });
-        i++;
-        continue;
+
+    // 1어절 고아 줄 또는 MIN_CHARS 미만 줄
+    if (line.words.length <= 1 || line.text.length < V2_MIN_CHARS) {
+
+      // 먼저 앞줄과 합치기 시도
+      if (result.length > 0) {
+        const prev = result[result.length - 1];
+        const mergedWithPrev = prev.text + ' ' + line.text;
+        if (mergedWithPrev.length <= V2_MAX_CHARS) {
+          result[result.length - 1] = {
+            text: mergedWithPrev,
+            words: [...prev.words, ...line.words]
+          };
+          continue;
+        }
+      }
+
+      // 앞줄과 안 되면 다음 줄과 합치기 시도
+      if (i + 1 < lines.length) {
+        const next = lines[i + 1];
+        const mergedWithNext = line.text + ' ' + next.text;
+        if (mergedWithNext.length <= V2_MAX_CHARS) {
+          result.push({
+            text: mergedWithNext,
+            words: [...line.words, ...next.words]
+          });
+          i++; // 다음 줄 스킵
+          continue;
+        }
       }
     }
-    if (line.text.length < V2_MIN_CHARS && result.length > 0) {
-      const prev = result[result.length - 1];
-      const merged = prev.text + ' ' + line.text;
-      if (merged.length <= V2_MAX_CHARS) {
-        result[result.length - 1] = { text: merged, words: [...prev.words, ...line.words] };
-        continue;
-      }
-    }
+
     result.push(line);
   }
   return result;
@@ -1243,7 +1254,7 @@ async function handleSubtitleFormat(body, env, headers) {
     }
 
     // ── 후처리 ──
-    const finalText = postProcessSubtitleV2(words, breaksAfter);
+    const finalText = await postProcessSubtitleV2(words, breaksAfter, env);
 
     return new Response(JSON.stringify({
       success: true,
@@ -1296,7 +1307,7 @@ async function handleSubtitleFormat(body, env, headers) {
     let cc = 0;
     for (let i = 0; i < words.length - 1; i++) { cc += words[i].length + 1; if (cc >= 20) { allBreaksAfter.push(i + 1); cc = 0; } }
   }
-  const finalText = postProcessSubtitleV2(words, allBreaksAfter);
+  const finalText = await postProcessSubtitleV2(words, allBreaksAfter, env);
   return new Response(JSON.stringify({ success: true, formatted: finalText, blocks: [{ index: 0, text: finalText }] }), { headers });
 }
 
