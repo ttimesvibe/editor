@@ -2994,10 +2994,12 @@ export default function App() {
             for (let ci = 0; ci < chunks.length; ci++) {
               const pct = Math.round((ci / chunks.length) * 100);
               btn.textContent = `⏳ AI 포맷팅 중 (${pct}%)...`;
+              console.log(`[자막 INPUT] chunk ${ci}: ${chunks[ci].length}자\n---\n${chunks[ci].substring(0, 500)}\n---`);
               const d = await apiCall("subtitle-format", { blocks: [{ index: ci, text: chunks[ci] }] }, cfg);
               if (d._debug) console.log(`[자막 DEBUG] chunk ${ci}:`, d._debug);
               const formatted = d.blocks || [];
               const resultText = formatted[0]?.text || "";
+              console.log(`[자막 OUTPUT] chunk ${ci}: ${resultText.length}자\n---\n${resultText.substring(0, 500)}\n---`);
 
               // 검증: 출력이 입력의 30% 미만이면 원본 사용
               if (resultText.length < chunks[ci].length * 0.3) {
