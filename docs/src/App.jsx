@@ -2973,9 +2973,10 @@ export default function App() {
               return getCorrectedText(b.text, dm[idx]);
             });
 
-            // V3: 블록(화자 턴) 단위 처리, 500자 초과만 문장 끝에서 분할
-            const MAX_BLOCK = 500;
-            const SENT_END = /(?<=[.?!요죠다까])\s+/;
+            // PATCH-008: 600~1000자 범위 + 화자 턴 경계에서 끊기
+            const CHUNK_MIN = 600;
+            const CHUNK_MAX = 1000;
+            const SENTENCE_END = /(?<=[.?!요죠다까])\s+/;
             const isMetaBlock = (text) => {
               const t = text.trim();
               if (!t) return true;
@@ -2987,25 +2988,38 @@ export default function App() {
               return false;
             };
             const chunks = [];
+            let currentChunk = "";
             for (const blockText of allTexts) {
               if (!blockText.trim()) continue;
               if (isMetaBlock(blockText)) continue;
-              if (blockText.length <= MAX_BLOCK) {
-                chunks.push(blockText);
-              } else {
-                const sentences = blockText.split(SENT_END);
-                let current = "";
-                for (const sent of sentences) {
-                  if (current.length + sent.length + 1 > MAX_BLOCK && current.length > 0) {
-                    chunks.push(current);
-                    current = sent;
-                  } else {
-                    current += (current ? ' ' : '') + sent;
+
+              const wouldBe = currentChunk.length + (currentChunk ? 1 : 0) + blockText.length;
+
+              if (currentChunk.length >= CHUNK_MIN && wouldBe > CHUNK_MAX) {
+                chunks.push(currentChunk);
+                currentChunk = blockText;
+              } else if (wouldBe > CHUNK_MAX && currentChunk.length < CHUNK_MIN) {
+                if (currentChunk) chunks.push(currentChunk);
+                if (blockText.length > CHUNK_MAX) {
+                  const sentences = blockText.split(SENTENCE_END);
+                  let partial = "";
+                  for (const sent of sentences) {
+                    if (partial.length + sent.length + 1 > CHUNK_MAX && partial.length > 0) {
+                      chunks.push(partial);
+                      partial = sent;
+                    } else {
+                      partial += (partial ? ' ' : '') + sent;
+                    }
                   }
+                  currentChunk = partial || "";
+                } else {
+                  currentChunk = blockText;
                 }
-                if (current) chunks.push(current);
+              } else {
+                currentChunk += (currentChunk ? '\n' : '') + blockText;
               }
             }
+            if (currentChunk) chunks.push(currentChunk);
 
             // 검증 함수
             const validateAndUse = (d, originalChunk) => {
