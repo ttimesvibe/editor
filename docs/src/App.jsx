@@ -2973,60 +2973,68 @@ export default function App() {
               return getCorrectedText(b.text, dm[idx]);
             });
 
-            // V2.2: 전체 텍스트를 어절로 분리
-            const fullText = allTexts.join('\n');
-            const words = fullText.split(/\s+/).filter(w => w.length > 0);
-
-            // 어절 기반 청크 분할 (50~100어절, 문장/절 경계에서 끊기)
-            const TARGET_WORDS = 50;
-            const SENTENCE_END = /[.?!]$/;
-            const CLAUSE_END = /(니다|어요|거든요|잖아요|는데요|네요|세요|죠|고요|는데|지만|니까|해서|있고)$/;
-
+            // V3: 블록(화자 턴) 단위 처리, 500자 초과만 문장 끝에서 분할
+            const MAX_BLOCK = 500;
+            const SENT_END = /(?<=[.?!요죠다까])\s+/;
             const chunks = [];
-            let start = 0;
-            while (start < words.length) {
-              let end = Math.min(start + TARGET_WORDS, words.length);
-              if (end < words.length) {
-                const searchStart = Math.max(start, start + Math.floor(TARGET_WORDS * 0.8));
-                const searchEnd = Math.min(words.length, start + Math.floor(TARGET_WORDS * 1.2));
-                let bestBreak = -1;
-                for (let i = searchEnd - 1; i >= searchStart; i--) {
-                  if (SENTENCE_END.test(words[i]) || CLAUSE_END.test(words[i])) {
-                    bestBreak = i + 1;
-                    break;
+            for (const blockText of allTexts) {
+              if (!blockText.trim()) continue;
+              if (blockText.length <= MAX_BLOCK) {
+                chunks.push(blockText);
+              } else {
+                const sentences = blockText.split(SENT_END);
+                let current = "";
+                for (const sent of sentences) {
+                  if (current.length + sent.length + 1 > MAX_BLOCK && current.length > 0) {
+                    chunks.push(current);
+                    current = sent;
+                  } else {
+                    current += (current ? ' ' : '') + sent;
                   }
                 }
-                if (bestBreak > 0) end = bestBreak;
+                if (current) chunks.push(current);
               }
-              chunks.push(words.slice(start, end));
-              start = end;
             }
 
-            // 각 chunk를 어절 번호 매겨서 전송
-            const formattedChunks = [];
-            for (let ci = 0; ci < chunks.length; ci++) {
-              const pct = Math.round((ci / chunks.length) * 100);
+            // 검증 함수
+            const validateAndUse = (d, originalChunk) => {
+              if (!d || !d.formatted) return originalChunk;
+              if (d._debug?.truncated) {
+                console.warn(`[자막] 축약 감지 (${d._debug.ratio}%) — 원본 사용`);
+                return originalChunk;
+              }
+              return d.formatted;
+            };
+
+            const PARALLEL = 3;
+            const formattedChunks = new Array(chunks.length);
+
+            // Warmup: 첫 블록 순차 호출 → prompt cache 생성
+            console.log(`[자막 V3] ${chunks.length}개 블록 처리 시작`);
+            const first = await apiCall("subtitle-format", { text: chunks[0], version: "v3" }, cfg);
+            if (first._debug) console.log(`[자막 DEBUG] chunk 0:`, first._debug);
+            formattedChunks[0] = validateAndUse(first, chunks[0]);
+
+            // 나머지: PARALLEL개씩 병렬 호출 → cache hit
+            for (let i = 1; i < chunks.length; i += PARALLEL) {
+              const pct = Math.round((i / chunks.length) * 100);
               btn.textContent = `⏳ AI 포맷팅 중 (${pct}%)...`;
 
-              const chunkWords = chunks[ci];
-              const numbered = chunkWords.map((w, i) => `[${i + 1}]${w}`).join(' ');
+              const batch = chunks.slice(i, i + PARALLEL);
+              const promises = batch.map((chunk, j) =>
+                apiCall("subtitle-format", { text: chunk, version: "v3" }, cfg)
+                  .then(d => ({ idx: i + j, d, chunk }))
+                  .catch(err => ({ idx: i + j, d: null, chunk, err }))
+              );
 
-              console.log(`[자막 INPUT] chunk ${ci}: ${chunkWords.length}어절`);
-              const d = await apiCall("subtitle-format", {
-                text: numbered,
-                words: chunkWords,
-                version: "v2"
-              }, cfg);
-              if (d._debug) console.log(`[자막 DEBUG] chunk ${ci}:`, d._debug);
-
-              const resultText = d.formatted || "";
-              console.log(`[자막 OUTPUT] chunk ${ci}: ${resultText.length}자`);
-              formattedChunks.push(resultText);
-
-              if (ci < chunks.length - 1) await delay(500);
+              const results = await Promise.all(promises);
+              for (const { idx, d, chunk } of results) {
+                if (d?._debug) console.log(`[자막 DEBUG] chunk ${idx}:`, d._debug);
+                formattedChunks[idx] = validateAndUse(d, chunk);
+              }
             }
 
-            // V2.2: Worker 후처리 완료 — 프론트 후처리 스킵
+            // V3: Worker 후처리 완료 — 프론트 후처리 스킵
             const finalText = formattedChunks.join('\n');
 
             setSubtitleCache(finalText);

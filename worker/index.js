@@ -1198,11 +1198,205 @@ function fixQuotesV2(lines) {
 }
 
 // ═══════════════════════════════════════
-// handleSubtitleFormat — V2.2
+// V3: 화자 턴 단위 자막 포맷팅
+// ═══════════════════════════════════════
+
+const SUBTITLE_FORMAT_PROMPT_V3 = `<role>
+You are a Korean subtitle line-break formatter.
+You receive a block of Korean interview transcript (one speaker's turn).
+Your job is to insert line breaks so viewers can read each line at a glance.
+You must NOT change, add, remove, or rephrase any word. Only insert line breaks.
+</role>
+
+<rules>
+1. Every line should be 15–25 characters (including spaces).
+2. No line may exceed 35 characters under any circumstance.
+3. Lines under 10 characters should be avoided unless semantically complete (e.g. direct speech, exclamation).
+4. Remove trailing periods (.) and commas (,) at end of each line. Preserve ? and !
+5. Output ONLY the line-broken text. No JSON, no explanation, no markdown.
+</rules>
+
+<clause_boundaries>
+Break AFTER words ending with:
+~하고, ~해서, ~인데, ~지만, ~니까, ~있고, ~거든요, ~잖아요, ~됐고, ~보니까, ~계세요, ~는데, ~때문에, ~합니다, ~돼요, ~거고, ~이고, ~하는, ~됩니다, ~있어요, ~거예요, ~하죠, ~되고
+
+Break BEFORE these conjunctions (they start a new line):
+그래서, 그리고, 하지만, 결국, 심지어, 특히, 마찬가지로, 근데, 그러니까, 그런데, 그러면, 그러다, 그런
+
+Break BEFORE direct speech (quoted utterances start a new line).
+</clause_boundaries>
+
+<semantic_chunks>
+A semantic chunk is a group of words forming ONE meaning unit. Never place a break inside a chunk.
+
+| Chunk Type                    | Example (keep together)       |
+|-------------------------------|-------------------------------|
+| Subject/Topic + Particle      | 사용자의 역량이                |
+| Modifier clause + Head noun   | 돌아가고 있는 곳들이            |
+| Adverb(ial phrase) + Predicate| 많이 쓸수록                    |
+| Object + Predicate            | 토큰을 생산할                  |
+| Main verb + Aux verb + Ending | 나오고 있으니까                |
+| Noun + Particle               | 사용자의 (사용자 / 의 = ERROR) |
+</semantic_chunks>
+
+<never_split>
+Breaking inside ANY of these patterns is a critical error.
+
+| Pattern Type                  | Keep Together            | WRONG Split              |
+|-------------------------------|--------------------------|--------------------------|
+| Modifier clause + Head noun   | 돌아가고 있는 곳들이       | 돌아가고 있는 / 곳들이     |
+| Object + Predicate            | 토큰을 많이 쓸수록        | 토큰을 많이 / 쓸수록      |
+| Main verb + Auxiliary verb    | 나오고 있으니까           | 나오고 / 있으니까         |
+| Adverb + Verb                 | 꽤 돌아가고              | 꽤 / 돌아가고            |
+| Noun + Particle               | 사용자의                 | 사용자 / 의              |
+| Orphaned single word on a line | (never allowed)         |                          |
+</never_split>
+
+<output_format>
+Output ONLY the text with line breaks inserted. Nothing else.
+Do NOT wrap in quotes, code blocks, or JSON.
+Do NOT change any word. Only add line breaks where lines should break.
+</output_format>`;
+
+// V3 후처리: 35자 초과 줄 한 줄 단위 모델 재질의
+async function resplitLongLines(lines, env) {
+  let resplitCount = 0;
+  const result = [];
+  for (const line of lines) {
+    if (line.length <= 35) {
+      result.push(line);
+      continue;
+    }
+    resplitCount++;
+    try {
+      const r = await callOpenAI(SUBTITLE_FORMAT_PROMPT_V3, line, env, {
+        temperature: 0.1, max_tokens: 1000, model: "gpt-5.4-mini", useJsonFormat: false,
+      });
+      if (r.content && typeof r.content === 'string') {
+        const newLines = r.content.split('\n').filter(l => l.trim());
+        if (newLines.length > 1) { result.push(...newLines); continue; }
+      } else if (typeof r.content === 'object') {
+        // callOpenAI가 JSON 파싱한 경우 — raw 텍스트 필요
+        result.push(line);
+        continue;
+      }
+    } catch (e) { /* 실패 시 원본 유지 */ }
+    result.push(line);
+  }
+  return { lines: result, resplitCount };
+}
+
+// V3 후처리: 짧은 줄 병합 (문자열 배열용)
+function mergeShortLinesSimple(lines) {
+  const result = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // 1어절 또는 10자 미만
+    const wordCount = trimmed.split(/\s+/).length;
+    if (wordCount <= 1 || trimmed.length < 10) {
+      if (result.length > 0 && (result[result.length - 1] + ' ' + trimmed).length <= 28) {
+        result[result.length - 1] += ' ' + trimmed;
+        continue;
+      }
+      if (i + 1 < lines.length && (trimmed + ' ' + lines[i + 1].trim()).length <= 28) {
+        result.push(trimmed + ' ' + lines[i + 1].trim());
+        i++;
+        continue;
+      }
+    }
+    result.push(trimmed);
+  }
+  return result;
+}
+
+// V3 후처리: 구두점 제거 (문자열 배열용)
+function removeTrailingPuncSimple(lines) {
+  return lines.map(l => {
+    let s = l.trimEnd();
+    while (s.endsWith('.') || s.endsWith(',')) s = s.slice(0, -1).trimEnd();
+    return s;
+  }).filter(l => l.length > 0);
+}
+
+// V3 후처리: 따옴표 보정 (문자열 배열용)
+function fixQuotesSimple(lines) {
+  let inSingle = false, inDouble = false;
+  return lines.map(line => {
+    let text = line;
+    const sc = (text.match(/'/g) || []).length;
+    const dc = (text.match(/"/g) || []).length;
+    if (inSingle && !text.startsWith("'")) text = "'" + text;
+    if (inDouble && !text.startsWith('"')) text = '"' + text;
+    if (sc % 2 === 1) inSingle = !inSingle;
+    if (dc % 2 === 1) inDouble = !inDouble;
+    if (inSingle && !text.endsWith("'")) text = text + "'";
+    if (inDouble && !text.endsWith('"')) text = text + '"';
+    return text;
+  });
+}
+
+// ═══════════════════════════════════════
+// handleSubtitleFormat — V3 + V2 + V1 하위 호환
 // ═══════════════════════════════════════
 
 async function handleSubtitleFormat(body, env, headers) {
-  // V2.2: { text (numbered), words, version: "v2" } — 프론트에서 청크 분할 + 어절 번호 매겨서 전송
+  // ── V3: { text, version: "v3" } — 화자 턴 단위, 모델이 줄바꿈 텍스트 직접 반환 ──
+  if (body.version === "v3" && body.text) {
+    const inputText = body.text;
+
+    const result = await callOpenAI(SUBTITLE_FORMAT_PROMPT_V3, inputText, env, {
+      temperature: 0.1, max_tokens: 4000, model: "gpt-5.4-mini", useJsonFormat: false,
+    });
+
+    if (result.error) {
+      return new Response(JSON.stringify({ error: result.error, _debug: { version: "v3", inputLength: inputText.length } }), { status: result.status || 500, headers });
+    }
+
+    // callOpenAI가 JSON 파싱을 시도하므로, content가 object일 수도 string일 수도 있음
+    let rawText = "";
+    if (typeof result.content === 'string') {
+      rawText = result.content;
+    } else if (result.content && typeof result.content === 'object') {
+      // JSON으로 파싱된 경우 — text 필드가 있으면 사용
+      rawText = result.content.text || result.content.formatted || JSON.stringify(result.content);
+    }
+
+    // 후처리
+    let lines = rawText.split('\n').filter(l => l.trim());
+    lines = removeTrailingPuncSimple(lines);
+    lines = mergeShortLinesSimple(lines);
+    lines = fixQuotesSimple(lines);
+
+    // 35자 초과 줄 재질의
+    const resplitResult = await resplitLongLines(lines, env);
+    lines = resplitResult.lines;
+
+    const formatted = lines.join('\n');
+
+    // 축약 검증
+    const inputClean = inputText.replace(/\s+/g, '');
+    const outputClean = formatted.replace(/[\n\s]+/g, '');
+    const ratio = inputClean.length > 0 ? Math.round((outputClean.length / inputClean.length) * 100) : 100;
+
+    return new Response(JSON.stringify({
+      success: true,
+      formatted,
+      _debug: {
+        version: "v3",
+        inputLength: inputText.length,
+        outputLength: formatted.length,
+        lineCount: lines.length,
+        ratio,
+        truncated: ratio < 80,
+        resplitCount: resplitResult.resplitCount,
+        finishReason: result.finish_reason,
+      },
+    }), { headers });
+  }
+
+  // ── V2: { text (numbered), words, version: "v2" } ──
   if (body.version === "v2" && body.text && body.words) {
     const numbered = body.text;
     const words = body.words;
