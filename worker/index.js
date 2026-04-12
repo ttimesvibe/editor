@@ -1,6 +1,7 @@
 // ttimes-editor — Cloudflare Worker
-// 7개 엔드포인트: /analyze, /correct, /spellcheck, /highlights, /visuals, /save, /load/:id
+// 6개 엔드포인트: /analyze, /correct, /highlights, /visuals, /save, /load/:id
 // OpenAI GPT-5.1 API 프록시 + CORS 완전 제어 + KV 세션 저장
+// /correct: v4 통합 교정 (필러+용어+맞춤법+구어체 단일 호출 + 코드 검증)
 // /highlights: v2 룰북 기반 2-Pass (Draft Agent → Editor Agent) + 청크 분할 지원
 
 export default {
@@ -61,7 +62,6 @@ if (path === "/debug-location") {
       else if (path === "/autosave") return await handleAutoSave(body, env, corsHeaders);
       else if (path === "/analyze") return await handleAnalyze(body, env, corsHeaders);
       else if (path === "/correct") return await handleCorrect(body, env, corsHeaders);
-      else if (path === "/spellcheck") return await handleSpellcheck(body, env, corsHeaders);
       else if (path === "/subtitle-format") return await handleSubtitleFormat(body, env, corsHeaders);
       else if (path === "/highlights") return await handleHighlights(body, env, corsHeaders);
       else if (path === "/term-explain") return await handleTermExplain(body, env, corsHeaders);
@@ -342,7 +342,7 @@ async function handleAnalyze(body, env, headers) {
 }
 
 // ═══════════════════════════════════════
-// /correct — 1단계: 청크별 교정 (강화)
+// /correct — v4 통합 교정 (필러+용어+맞춤법+구어체 단일 호출)
 // ═══════════════════════════════════════
 
 const BASE_CORRECT_PROMPT = `You are a professional editor specializing in correcting Korean interview transcripts produced by STT (Speech-to-Text).
@@ -350,12 +350,25 @@ You follow the Korean National Institute of Korean Language (국립국어원) st
 You correct word-level errors while preserving the original conversation's content, tone, and nuance as much as possible.
 Preserve the original form of technical terms and proper nouns — only fix typos.
 
+## ★ Processing Order (follow this exact sequence)
+For each block, evaluate corrections in this order:
+1. STT misrecognition (§2) — fix wrong words first
+2. Number notation (§3) — fix numbers
+3. Spelling & spacing (§5) — fix orthography
+4. Colloquial polishing (§6) — polish spoken language
+5. Filler removal (§1) — remove fillers LAST, on the corrected sentence
+
+Why this order matters: by the time you evaluate fillers, the sentence is already properly corrected.
+Example: "근데 이걸 해가지고" → first §6 converts "해가지고"→"해서" and "근데"→"그런데",
+then §1 checks if "그런데" is filler or meaningful connector. Since "그런데" is not in the filler list → keep it.
+Result: "그런데 이걸 해서" ✅
+
 ## Scope of Work
 
-### 1. Filler Word & Interjection Removal
+### §1. Filler Word & Interjection Removal (processed LAST)
 You MUST find and remove unnecessary interjections and habitual filler words embedded within sentences.
 
-**Interjection removal targets:** "자", "음", "어", "아니", "이제", "인제", "또", "좀", "뭐", "그냥", "약간", "진짜", "되게", "막", "이렇게", "저렇게", "사실", "근데"
+**Interjection removal targets:** "자", "음", "어", "아니", "이제", "인제", "또", "좀", "뭐", "그냥", "약간", "진짜", "되게", "막", "이렇게", "저렇게", "사실"
 
 **Short-response removal targets:** "네", "그렇죠", "맞아요", "아니요" etc. when used as standalone back-channel responses.
 - Exception: Keep "네"/"아니요" when it is a substantive answer to a question.
@@ -363,7 +376,7 @@ You MUST find and remove unnecessary interjections and habitual filler words emb
 
 **Additional patterns to find:**
 - Speaker-specific verbal habits: Any meaningless word/phrase a specific speaker uses repeatedly, even if not in the list above.
-  Examples: "그래가지고", "뭐라 그러냐", "어떻게 보면", "이런 거", "그니까"
+  Examples: "뭐라 그러냐", "어떻게 보면", "이런 거", "그니까"
 - Compound fillers: Multiple filler words in sequence — remove the entire compound.
   Example: "그러니까 이제 뭐" → remove all. "사실 좀 그냥" → remove all.
 - Repetition: Same word or similar expression repeated unnecessarily.
@@ -391,12 +404,12 @@ How to distinguish from a real answer:
 - Cross-talk "네": Appears mid-sentence, the sentence flows naturally without it, same speaker continues.
 - Real answer "네": Speaker B's turn starts with "네" as a standalone response or "네, [new sentence]".
 
-### 2. STT Misrecognition Correction
+### §2. STT Misrecognition Correction
 - Words mapped in the terminology dictionary below → MUST be corrected. This is mandatory, not optional.
 - Speaker name misrecognitions must also be corrected.
 - Words not in the dictionary → use context judgment. If uncertain, keep the original.
 
-### 3. Number & Quantity Notation Rules (★ Highest Priority)
+### §3. Number & Quantity Notation Rules (★ Highest Priority)
 Accurately interpret numbers spoken in Korean and convert to Arabic numerals.
 
 **Korean number words → Arabic numerals:**
@@ -411,13 +424,64 @@ Accurately interpret numbers spoken in Korean and convert to Arabic numerals.
 
 **Note:** STT may convert "이삼십" to "2~30" but the actual meaning is often "20~30". Use context to judge.
 
-### 4. User-Specified Notation Rules (★ Highest Priority)
+### §4. User-Specified Notation Rules (★ Highest Priority)
 These rules override the terminology dictionary:
 - "챗gpt", "챗지피티" → "챗GPT"
 - "에이전트 AI" → "AI 에이전트"
 - "AI 에이전틱" → "에이전틱 AI"
 - "NVIDIA" → "엔비디아"
 - "아웃소싱" → "외주"
+
+### §5. Spelling & Spacing
+Fix remaining spelling, spacing, and punctuation errors.
+
+**5-1. Spacing (highest frequency):**
+- Dependent nouns: "할 수있다" → "할 수 있다"
+- Negation spacing: "안되" → "안 되", "못하" → "못 하"
+
+**5-2. Orthography:**
+- Common targets: 됬→됐, 웬지→왠지, 몇일→며칠, 어떻게/어떡해, 안돼/안되, 데/대, 로서/로써, 되/돼
+
+**5-3. Particle correction:**
+- Fix incorrect particles based on preceding syllable's final consonant: 을/를, 이/가, 은/는, 과/와, 으로/로
+
+**5-4. Punctuation:**
+- Fix missing periods, misplaced commas.
+
+### §6. Colloquial Expression Polishing
+This transcript is for broadcast subtitles. Polish overly casual spoken language while preserving the speaker's natural tone.
+
+**§6-1. Mandatory mappings (always apply):**
+- "근데" → "그런데"
+- "이거를" / "이거" → "이것을" / "이것"
+- "그거를" / "그거" → "그것을" / "그것"
+- "~하는 거는" → "~하는 것은"
+- "~하는 거고" → "~하는 것이고"
+- "~하는 거를" → "~하는 것을"
+- "~하는 거가" → "~하는 것이"
+- "~하면은" → "~하면"
+- "~인데요은" → "~인데요"
+- "~잖아" → "~잖아요" (casual → polite, interview context)
+- "그래가지고" → "그래서"
+- "되가지고" → "돼서"
+- "해가지고" → "해서"
+
+**§6-2. Active detection (★ proactively find and fix):**
+- Spoken connectives → written forms: "해 갖고" → "해서", "그래갖고" → "그래서"
+- Informal endings in polite-speech context: "~거든" → "~거든요", "~잖아" → "~잖아요"
+- Redundant particles: "~하면을" → "~하면", "~에다가" → "~에"
+- Unnecessary repetition: "진짜 진짜 좋은" → "정말 좋은"
+- Verb ending cleanup: "하는거에요" → "하는 거예요", "하는거죠" → "하는 거죠"
+
+**§6-3. Preserve these (do NOT correct):**
+- "~거든요", "~잖아요", "~인 거죠", "~인 거예요" — speaker's conversational style
+- "~인 건데", "~한 건데" — natural contractions
+- "뭔가" — acceptable in spoken interview context (do NOT change to "무언가")
+- "어쨌든" — standard form, no correction needed
+- "갖다", "갖고" — standard Korean (do NOT change to "가져다", "가지고")
+
+**§6-4. Single-action rule:**
+Each word gets ONE action only. If a word could be both removed (§1 filler) and converted (§6 colloquial), apply §6 conversion only (since §6 runs before §1). NEVER report both a filler_removal and a spelling change for the same word.
 
 ## Output Rules
 Report only changes as JSON. Omit blocks with no changes.
@@ -436,6 +500,12 @@ The "original" field must be an **exact copy** from the source text.
       "original": "엔트로피 클로드",
       "corrected": "앤트로픽 클로드",
       "reason": "Anthropic의 한국어 표기"
+    }, {
+      "type": "spelling",
+      "subtype": "colloquial",
+      "original": "해가지고",
+      "corrected": "해서",
+      "reason": "spoken connective → written form"
     }]
   }]
 }
@@ -446,10 +516,12 @@ The "original" field must be an **exact copy** from the source text.
 3. NEVER misidentify meaningful words as fillers.
 4. NEVER make uncertain corrections.
 5. NEVER rearrange or summarize sentences.
-6. Process ALL blocks without skipping any.
-7. Output JSON ONLY — no other text.
-8. **Terminology dictionary mappings are MANDATORY. Do not ignore them.**
-9. **Number notation rules and user-specified notation rules take HIGHEST priority.**`;
+6. NEVER insert words that do not exist in the original.
+7. Process ALL blocks without skipping any.
+8. Output JSON ONLY — no other text.
+9. **Terminology dictionary mappings are MANDATORY. Do not ignore them.**
+10. **Number notation rules and user-specified notation rules take HIGHEST priority.**
+11. **Each word gets ONE action only: either remove OR convert, never both.**`;
 
 function buildCorrectPrompt(analysis, customFillers, customTerms) {
   let prompt = BASE_CORRECT_PROMPT;
@@ -509,6 +581,78 @@ function buildCorrectPrompt(analysis, customFillers, customTerms) {
   return prompt;
 }
 
+// ═══════════════════════════════════════
+// 코드 검증 (Step 1-V) — AI 응답의 비정상 diff 제거
+// ═══════════════════════════════════════
+
+function validateCorrections(chunkText, result) {
+  if (!result?.chunks) return result;
+
+  for (const chunk of result.chunks) {
+    if (!chunk.changes) continue;
+
+    chunk.changes = chunk.changes.filter(change => {
+      const { original, corrected, type } = change;
+
+      // 규칙 1: original이 원본 텍스트에 존재하는가
+      if (!original || chunkText.indexOf(original) === -1) {
+        console.warn(`[V] 제거: original not found — "${original?.substring(0, 30)}"`);
+        return false;
+      }
+
+      // 규칙 2: original과 corrected가 동일하면 무의미
+      if (original.trim() === (corrected || "").trim()) {
+        return false;
+      }
+
+      // 규칙 3: 축약 감지 — corrected가 original의 30% 미만이면 과도한 삭제
+      // filler_removal, spelling 제외 (구어체 교정은 대폭 축약이 자연스러울 수 있음)
+      if (type !== "filler_removal" && type !== "spelling" && corrected !== undefined) {
+        const ratio = corrected.length / original.length;
+        if (ratio < 0.3 && original.length > 10) {
+          console.warn(`[V] 제거: 과도한 축약 (${Math.round(ratio*100)}%) — "${original.substring(0, 30)}"`);
+          return false;
+        }
+      }
+
+      // 규칙 4: filler_removal에서 corrected가 original보다 길면 환각 삽입
+      if (type === "filler_removal" && corrected && corrected.length > original.length) {
+        console.warn(`[V] 제거: filler 환각 — "${corrected.substring(0, 30)}"`);
+        return false;
+      }
+
+      // 규칙 5: 새 단어 3개 이상이면 문장 재작성 (term_correction 제외)
+      if (corrected && type !== "term_correction") {
+        const origWords = new Set(original.split(/\s+/));
+        const newWords = corrected.split(/\s+/).filter(w => !origWords.has(w) && w.length > 1);
+        if (newWords.length >= 3) {
+          console.warn(`[V] 제거: 새 단어 ${newWords.length}개 — [${newWords.join(', ')}]`);
+          return false;
+        }
+      }
+
+      // 규칙 6: removed_fillers가 original 안에 있는지
+      if (type === "filler_removal" && change.removed_fillers) {
+        change.removed_fillers = change.removed_fillers.filter(f => original.includes(f));
+        if (change.removed_fillers.length === 0) {
+          console.warn(`[V] 제거: removed_fillers가 original에 없음`);
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    // 규칙 7: 같은 original에 중복 change → 마지막 것만 유지
+    const seen = new Map();
+    chunk.changes.forEach((ch, idx) => { if (ch.original) seen.set(ch.original, idx); });
+    chunk.changes = chunk.changes.filter((ch, idx) => !ch.original || seen.get(ch.original) === idx);
+  }
+
+  result.chunks = result.chunks.filter(c => c.changes?.length > 0);
+  return result;
+}
+
 async function handleCorrect(body, env, headers) {
   const { chunk_text, chunk_index, total_chunks, context_blocks, analysis, custom_fillers, custom_terms } = body;
   if (!chunk_text) return new Response(JSON.stringify({ error: "chunk_text is required" }), { status: 400, headers });
@@ -522,7 +666,9 @@ async function handleCorrect(body, env, headers) {
     const result = await callOpenAI(systemPrompt, userMsg, env, { max_tokens: 32000 });
     if (result.error && result.status === 429) { await new Promise(r => setTimeout(r, (attempt+1)*3000)); continue; }
     if (result.error) return new Response(JSON.stringify({ error: result.error }), { status: result.status||500, headers });
-    return new Response(JSON.stringify({ success: true, result: result.content, chunk_index, usage: result.usage }), { headers });
+    // v4: 코드 검증 적용
+    const validated = validateCorrections(chunk_text, result.content);
+    return new Response(JSON.stringify({ success: true, result: validated, chunk_index, usage: result.usage }), { headers });
   }
   return new Response(JSON.stringify({ error: "All retries failed" }), { status: 500, headers });
 }
@@ -727,110 +873,6 @@ async function handleEdit(blocks, corrected_text, analysis, draftHighlights, env
   const result = await callOpenAI(systemPrompt, userMsg, env, { temperature: 0.2, max_tokens: 16000 });
   if (result.error) return new Response(JSON.stringify({ error: result.error }), { status: result.status||500, headers });
   return new Response(JSON.stringify({ success: true, result: result.content, usage: result.usage }), { headers });
-}
-
-// ═══════════════════════════════════════
-// /spellcheck — Step 1.5
-// ═══════════════════════════════════════
-
-const SPELLCHECK_PROMPT = `You are a Korean spelling, spacing, and style editor.
-You follow the Korean National Institute of Korean Language standard rules.
-The input text has already been through Step 1 editing (filler removal + term correction).
-Your job is to catch remaining spelling, spacing, and colloquial expression issues.
-
-## Scope of Work
-
-### 1. Spacing (highest frequency issue)
-Fix spacing errors involving particles, dependent nouns, auxiliary verbs, and compound words.
-- "할 수있다" → "할 수 있다"
-- "안되" → "안 되" (negation + verb spacing)
-- "못하" → "못 하" (negation + auxiliary verb spacing)
-
-### 2. Orthography
-Fix misspellings based on standard Korean orthography rules.
-Common targets: 됬→됐, 웬지→왠지, 몇일→며칠, 어떻게/어떡해, 안돼/안되, 데/대, 로서/로써, 되/돼
-
-### 3. Particle Correction
-Fix incorrect particles based on the preceding syllable's final consonant.
-Targets: 을/를, 이/가, 은/는, 과/와, 으로/로
-
-### 4. Punctuation
-Fix missing periods, misplaced commas.
-
-### 5. Colloquial Expression Polishing
-
-This transcript is for broadcast subtitles. Polish overly casual spoken language while preserving the speaker's natural tone.
-
-**5-1. Mandatory mappings (always apply):**
-- "근데" → "그런데"
-- "이거를" / "이거" → "이것을" / "이것"
-- "그거를" / "그거" → "그것을" / "그것"
-- "~하는 거는" → "~하는 것은"
-- "~하는 거고" → "~하는 것이고"
-- "~하는 거를" → "~하는 것을"
-- "~하는 거가" → "~하는 것이"
-- "~하면은" → "~하면"
-- "~인데요은" → "~인데요"
-- "~잖아" → "~잖아요" (casual → polite, interview context)
-
-**5-2. Active detection (★ proactively find and fix these):**
-Beyond the mandatory list above, actively search for these patterns:
-- Contracted verbs → full forms: "갖다" → "가져다", "갖고" → "가지고"
-- Spoken connectives → written forms: "해가지고" → "해서", "그래갖고" → "그래서", "해 갖고" → "해서"
-- Informal endings in polite-speech context: "~거든" → "~거든요", "~잖아" → "~잖아요"
-- Redundant particles: "~하면을" → "~하면", "~에다가" → "~에"
-- Unnecessary repetition: "진짜 진짜 좋은" → "정말 좋은"
-- Verb ending cleanup: "하는거에요" → "하는 거예요", "하는거죠" → "하는 거죠"
-
-**5-3. Preserve these (do NOT correct):**
-- "~거든요", "~잖아요", "~인 거죠", "~인 거예요" — speaker's conversational style
-- "~인 건데", "~한 건데" — natural contractions
-- "뭔가" — acceptable in spoken interview context (do NOT change to "무언가")
-- "어쨌든" — standard form, no correction needed
-
-### 6. Number Notation Recheck
-Catch any number notation errors missed in Step 1.
-- "천억" → "1000억", "사천만 명" → "4000만 명"
-- Ranges: "이삼십 명" → "20~30명", "삼사만 원" → "3만~4만 원"
-
-## Output Format (changes only, JSON)
-{
-  "chunks": [{
-    "block_index": 3,
-    "changes": [{
-      "type": "spelling", "subtype": "spacing",
-      "original": "할 수있다", "corrected": "할 수 있다",
-      "reason": "dependent noun spacing"
-    }, {
-      "type": "spelling", "subtype": "colloquial",
-      "original": "해가지고", "corrected": "해서",
-      "reason": "spoken connective → written form"
-    }]
-  }]
-}
-
-## Absolute Rules
-1. NEVER shorten, condense, or summarize sentences.
-2. NEVER change technical terms or proper nouns.
-3. NEVER alter speaker's characteristic speech patterns (~거든요, ~잖아요, ~인 거죠).
-4. Output JSON ONLY — no other text.
-5. If the input text already has correct spelling and style, return {"chunks":[]}.`;
-
-async function handleSpellcheck(body, env, headers) {
-  const { chunk_text, chunk_index, total_chunks, context_blocks } = body;
-  if (!chunk_text) return new Response(JSON.stringify({ error: "chunk_text is required" }), { status: 400, headers });
-
-  let userMsg = "";
-  if (context_blocks) userMsg += `[Context reference — do NOT modify]\n${context_blocks}\n\n`;
-  userMsg += `[Correction target — chunk ${(chunk_index||0)+1}/${total_chunks||1}]\n${chunk_text}`;
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await callOpenAI(SPELLCHECK_PROMPT, userMsg, env, { temperature: 0.1, max_tokens: 32000 });
-    if (result.error && result.status === 429) { await new Promise(r => setTimeout(r, (attempt+1)*3000)); continue; }
-    if (result.error) return new Response(JSON.stringify({ error: result.error }), { status: result.status||500, headers });
-    return new Response(JSON.stringify({ success: true, result: result.content, chunk_index, usage: result.usage }), { headers });
-  }
-  return new Response(JSON.stringify({ error: "All retries failed" }), { status: 500, headers });
 }
 
 // ═══════════════════════════════════════
