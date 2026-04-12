@@ -174,6 +174,60 @@ export async function apiHighlightsEdit(blocks, analysis, draftHighlights, cfg, 
   return d.result;
 }
 
+// ── 탭별 세션 저장/로드 (새 스키마) ──
+
+export async function apiSaveTab(sessionId, tab, data, config, fn) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: sessionId, tab, data, fn }),
+  });
+  const d = await r.json();
+  if (!d.success) throw new Error(d.error || "저장 실패");
+  return d.id;
+}
+
+export async function apiLoadMeta(sessionId, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/load/${sessionId}`);
+  if (!r.ok) throw new Error("메타 로드 실패");
+  return r.json();
+}
+
+export async function apiLoadTab(sessionId, tab, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/load/${sessionId}/${tab}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+// ── 하이라이트 추천 ──
+
+export async function apiHlRecommend(script, config) {
+  const d = await apiCall("hl-recommend", { script }, config);
+  return d.result;
+}
+
+// ── 하이라이트 타임스탬프 ──
+
+export async function apiHlTimestamps(script, config) {
+  const d = await apiCall("hl-timestamps", { script }, config);
+  return d.result;
+}
+
+// ── 세트 생성 ──
+
+export async function apiSetgen(script, guestName, guestTitle, focusKeyword, config) {
+  const d = await apiCall("setgen", {
+    script, guest_name: guestName, guest_title: guestTitle, focus_keyword: focusKeyword,
+  }, config);
+  return d;
+}
+
 export function mockCorrectChunk(chunkText, analysis, cfg) {
   const chunks = [];
   const blockRe = /\[블록 (\d+)\]/g;

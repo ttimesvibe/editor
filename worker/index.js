@@ -29,9 +29,16 @@ if (path === "/debug-location") {
       return new Response(JSON.stringify({ colo: request.cf?.colo, country: request.cf?.country, city: request.cf?.city }), { headers: corsHeaders });
     }
 
+    // /load/{id}/{tab} — 특정 탭 데이터 로드 (tab-based)
+    const loadTabMatch = path.match(/^\/load\/([a-zA-Z0-9]+)\/([a-z]+)$/);
+    if (loadTabMatch && request.method === "GET") {
+      return await handleLoadTab(loadTabMatch[1], loadTabMatch[2], env, corsHeaders);
+    }
+
+    // /load/{id} — 메타 반환 (어떤 탭이 존재하는지) + 레거시 폴백
     const loadMatch = path.match(/^\/load\/([a-zA-Z0-9]+)$/);
     if (loadMatch && request.method === "GET") {
-      return await handleLoad(loadMatch[1], env, corsHeaders);
+      return await handleLoadMeta(loadMatch[1], env, corsHeaders);
     }
 
     // /dict — 팀 공유 단어장 (GET: 불러오기, POST: 저장)
@@ -60,12 +67,16 @@ if (path === "/debug-location") {
       if (path === "/dict") return await handleDictPost(body, env, corsHeaders);
       else if (path === "/save") return await handleSave(body, env, corsHeaders);
       else if (path === "/autosave") return await handleAutoSave(body, env, corsHeaders);
+      else if (path === "/save-legacy") return await handleSaveLegacy(body, env, corsHeaders);
       else if (path === "/analyze") return await handleAnalyze(body, env, corsHeaders);
       else if (path === "/correct") return await handleCorrect(body, env, corsHeaders);
       else if (path === "/subtitle-format") return await handleSubtitleFormat(body, env, corsHeaders);
       else if (path === "/highlights") return await handleHighlights(body, env, corsHeaders);
       else if (path === "/term-explain") return await handleTermExplain(body, env, corsHeaders);
       else if (path === "/visuals") return await handleVisuals(body, env, corsHeaders);
+      else if (path === "/hl-recommend") return await handleHlRecommend(body, env, corsHeaders);
+      else if (path === "/hl-timestamps") return await handleHlTimestamps(body, env, corsHeaders);
+      else if (path === "/setgen") return await handleSetgen(body, env, corsHeaders);
       else return new Response(JSON.stringify({ error: "Unknown endpoint" }), { status: 404, headers: corsHeaders });
     } catch (err) {
       return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
@@ -77,35 +88,69 @@ if (path === "/debug-location") {
 // /save, /load
 // ═══════════════════════════════════════
 
+// ── 탭별 저장 (새 스키마) ──
 async function handleSave(body, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const id = body.id || Array.from(crypto.getRandomValues(new Uint8Array(5))).map(b => b.toString(36)).join("").slice(0, 8);
+  const tab = body.tab; // "correction"|"highlight"|"setgen"|"metadata"|"manuscript"|"subtitle"|"review"
+  const data = body.data;
+  const savedAt = new Date().toISOString();
+
+  if (tab && data) {
+    // ── 탭별 저장 (새 구조) ──
+    await env.SESSIONS.put(`s:${id}:${tab}`, JSON.stringify({ ...data, savedAt }), { expirationTtl: 60*60*24*365 });
+
+    // meta 업데이트
+    let meta;
+    try {
+      const raw = await env.SESSIONS.get(`s:${id}:meta`);
+      meta = raw ? JSON.parse(raw) : {};
+    } catch { meta = {}; }
+    if (!meta.sessionId) meta.sessionId = id;
+    if (!meta.createdAt) meta.createdAt = savedAt;
+    meta.updatedAt = savedAt;
+    meta.updatedBy = "editor";
+    meta.schemaVersion = "1.0";
+    if (body.fn) meta.fn = body.fn;
+    if (!meta.stages) meta.stages = {};
+    meta.stages[tab] = { status: body.status || "완료", updatedAt: savedAt };
+    await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify(meta), { expirationTtl: 60*60*24*365 });
+
+    // 세션 인덱스 업데이트
+    try {
+      const indexData = await env.SESSIONS.get("session_index");
+      const index = indexData ? JSON.parse(indexData) : [];
+      const existing = index.findIndex(s => s.id === id);
+      const entry = { id, fn: meta.fn || body.fn || "제목 없음", savedAt, tab, schema: "v2" };
+      if (existing >= 0) index[existing] = { ...index[existing], ...entry };
+      else index.unshift(entry);
+      await env.SESSIONS.put("session_index", JSON.stringify(index.slice(0, 200)));
+    } catch (e) { console.error("세션 인덱스 업데이트 실패:", e.message); }
+
+    return new Response(JSON.stringify({ success: true, id }), { headers });
+  }
+
+  // ── 레거시 폴백: tab 없이 전체 데이터 저장 ──
+  return await handleSaveLegacy(body, env, headers);
+}
+
+// 레거시 단일 key 저장 (하위 호환)
+async function handleSaveLegacy(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const id = body.id || Array.from(crypto.getRandomValues(new Uint8Array(5))).map(b => b.toString(36)).join("").slice(0, 8);
   const { id: _discardId, ...dataWithoutId } = body;
   const savedAt = new Date().toISOString();
   await env.SESSIONS.put("save_" + id, JSON.stringify({ ...dataWithoutId, savedAt }), { expirationTtl: 60*60*24*365 });
 
-  // 세션 인덱스 업데이트 (목록 관리)
   try {
     const indexData = await env.SESSIONS.get("session_index");
     const index = indexData ? JSON.parse(indexData) : [];
     const existing = index.findIndex(s => s.id === id);
-    const entry = {
-      id,
-      fn: body.fn || "제목 없음",
-      savedAt,
-      blockCount: body.blocks?.length || 0,
-      hasGuide: (body.hl?.length || 0) > 0,
-    };
-    if (existing >= 0) {
-      index[existing] = entry;
-    } else {
-      index.unshift(entry);
-    }
-    const trimmed = index.slice(0, 200);
-    await env.SESSIONS.put("session_index", JSON.stringify(trimmed));
-  } catch (e) {
-    console.error("세션 인덱스 업데이트 실패:", e.message);
-  }
+    const entry = { id, fn: body.fn || "제목 없음", savedAt, blockCount: body.blocks?.length || 0, hasGuide: (body.hl?.length || 0) > 0 };
+    if (existing >= 0) index[existing] = entry;
+    else index.unshift(entry);
+    await env.SESSIONS.put("session_index", JSON.stringify(index.slice(0, 200)));
+  } catch (e) { console.error("세션 인덱스 업데이트 실패:", e.message); }
 
   return new Response(JSON.stringify({ success: true, id }), { headers });
 }
@@ -118,14 +163,19 @@ async function handleSessionList(env, headers) {
   return new Response(JSON.stringify({ success: true, sessions: index }), { headers });
 }
 
-// 세션 삭제
+// 세션 삭제 (레거시 + 탭별 key 모두 정리)
 async function handleSessionDelete(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
-  // KV에서 세션 데이터 삭제
+  // 레거시 key 삭제
   await env.SESSIONS.delete(id);
-  // 인덱스에서도 제거
+  await env.SESSIONS.delete("save_" + id);
+  await env.SESSIONS.delete("auto_" + id);
+  // 탭별 key 삭제 (새 스키마)
+  const tabs = ["meta","manuscript","correction","subtitle","review","highlight","setgen","metadata"];
+  await Promise.all(tabs.map(t => env.SESSIONS.delete(`s:${id}:${t}`)));
+  // 인덱스에서 제거
   try {
     const indexData = await env.SESSIONS.get("session_index");
     const index = indexData ? JSON.parse(indexData) : [];
@@ -135,23 +185,63 @@ async function handleSessionDelete(body, env, headers) {
   return new Response(JSON.stringify({ success: true }), { headers });
 }
 
-// 자동 저장 (TTL 7일)
+// 자동 저장 (TTL 7일) — 탭별 또는 레거시
 async function handleAutoSave(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const id = body.id || Array.from(crypto.getRandomValues(new Uint8Array(5))).map(b => b.toString(36)).join("").slice(0, 8);
-  const { id: _discardId, ...dataWithoutId } = body;
+  const tab = body.tab;
+  const data = body.data;
   const savedAt = new Date().toISOString();
+
+  if (tab && data) {
+    // 탭별 자동 저장
+    await env.SESSIONS.put(`s:${id}:${tab}`, JSON.stringify({ ...data, savedAt }), { expirationTtl: 60*60*24*7 });
+    // meta도 자동 저장
+    let meta;
+    try {
+      const raw = await env.SESSIONS.get(`s:${id}:meta`);
+      meta = raw ? JSON.parse(raw) : {};
+    } catch { meta = {}; }
+    if (!meta.sessionId) meta.sessionId = id;
+    if (!meta.createdAt) meta.createdAt = savedAt;
+    meta.updatedAt = savedAt;
+    if (body.fn) meta.fn = body.fn;
+    if (!meta.stages) meta.stages = {};
+    meta.stages[tab] = { status: "진행중", updatedAt: savedAt };
+    await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify(meta), { expirationTtl: 60*60*24*7 });
+    return new Response(JSON.stringify({ success: true, id }), { headers });
+  }
+
+  // 레거시 자동 저장
+  const { id: _discardId, ...dataWithoutId } = body;
   await env.SESSIONS.put("auto_" + id, JSON.stringify({ ...dataWithoutId, savedAt }), { expirationTtl: 60*60*24*7 });
   return new Response(JSON.stringify({ success: true, id }), { headers });
 }
 
-async function handleLoad(id, env, headers) {
+// /load/{id} — 메타 반환 (새 스키마), 레거시 폴백
+async function handleLoadMeta(id, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
-  // save_ 우선, 기존 키 폴백, auto_ 최종 폴백
-  var data = await env.SESSIONS.get("save_" + id);
+
+  // 새 스키마: s:{id}:meta 확인
+  const metaRaw = await env.SESSIONS.get(`s:${id}:meta`);
+  if (metaRaw) {
+    const meta = JSON.parse(metaRaw);
+    return new Response(JSON.stringify({ schema: "v2", ...meta }), { headers });
+  }
+
+  // 레거시 폴백: save_ → 기존 → auto_
+  let data = await env.SESSIONS.get("save_" + id);
   if (!data) data = await env.SESSIONS.get(id);
   if (!data) data = await env.SESSIONS.get("auto_" + id);
   if (!data) return new Response(JSON.stringify({ error: "세션을 찾을 수 없습니다." }), { status: 404, headers });
+  return new Response(data, { headers });
+}
+
+// /load/{id}/{tab} — 특정 탭 데이터 반환
+async function handleLoadTab(id, tab, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const data = await env.SESSIONS.get(`s:${id}:${tab}`);
+  if (!data) return new Response(JSON.stringify({ error: `탭 데이터 없음: ${tab}` }), { status: 404, headers });
   return new Response(data, { headers });
 }
 
@@ -1783,4 +1873,377 @@ function handleVisuals(body, env, headers) {
     success: false, status: "not_implemented",
     message: "3단계 자료/그래픽 가이드는 룰북 완성 후 구현 예정입니다."
   }), { status: 200, headers });
+}
+
+// ═══════════════════════════════════════
+// /hl-recommend — 하이라이트 AI 추천
+// ═══════════════════════════════════════
+
+const HL_RECOMMEND_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 하이라이트 편집자입니다.
+인터뷰 원고를 읽고, 30~40초 분량의 하이라이트 영상에 쓸 수 있는 인상적인 발언 구간을 추천합니다.
+
+## 하이라이트란?
+- 인터뷰에서 가장 임팩트 있는 발언 5~8개를 뽑아 이어 붙인 30~40초짜리 쇼츠/프리뷰 영상
+- 시청자가 "이 인터뷰 본편을 봐야겠다"고 느끼게 만드는 것이 목적
+- 각 발언은 2~8초 분량 (10~50자 정도)
+
+## 좋은 하이라이트 구간의 조건
+1. 그 자체로 임팩트가 있는 문장 (맥락 없이 들어도 "오?" 하는 발언)
+2. 구체적 숫자나 사실이 포함된 발언 ("토큰을 월 4000달러 씁니다")
+3. 감정이 실린 단언 ("적게 써서 잘할 가능성은 없어요")
+4. 대비/반전이 있는 발언 ("주니어는 400불, 시니어는 4000불")
+5. 게스트만의 독특한 표현이나 비유
+6. 호스트(홍재의)의 날카로운 질문이나 반응도 포함 가능
+
+## 피해야 할 구간
+- 너무 긴 설명이나 나열
+- 맥락 없이는 이해 불가능한 발언
+- "네", "그렇죠" 같은 맞장구만 있는 부분
+
+## 출력 형식 (JSON만 출력)
+{
+  "candidates": [
+    {
+      "text": "원고에서 발췌한 정확한 텍스트",
+      "speaker": "화자명",
+      "reason": "왜 하이라이트에 적합한지",
+      "impact": "high|medium",
+      "estimated_seconds": 3
+    }
+  ],
+  "suggested_flow": "추천 순서대로 이어붙였을 때의 흐름 설명 (1문장)"
+}
+
+## 규칙
+- 후보를 8~12개 추천 (편집자가 그중 5~8개를 선택)
+- impact가 high인 것을 5개 이상 포함
+- 원고의 텍스트를 정확히 발췌 (수정하지 말 것)
+- estimated_seconds는 ttimes 인터뷰 말하기 속도 기준 (초당 약 9자, 분당 540자)
+- 총 후보의 합산이 60~90초 분량이 되도록`;
+
+function compressScriptForHl(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  var h = Math.floor(maxChars * 0.4), t = Math.floor(maxChars * 0.4);
+  var mid = maxChars - h - t - 50, ms = Math.floor(text.length * 0.4);
+  return text.substring(0, h) + "\n[...중략...]\n" + text.substring(ms, ms + mid) + "\n[...중략...]\n" + text.substring(text.length - t);
+}
+
+async function handleHlRecommend(body, env, headers) {
+  if (!body.script) return new Response(JSON.stringify({ error: "script required" }), { status: 400, headers });
+  if (!env.OPENAI_API_KEY) return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), { status: 500, headers });
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.OPENAI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4.1",
+        messages: [{ role: "system", content: HL_RECOMMEND_PROMPT }, { role: "user", content: compressScriptForHl(body.script, 14000) }],
+        temperature: 0.5, max_tokens: 2000,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    const content = data.choices?.[0]?.message?.content || "";
+    const jm = content.match(/\{[\s\S]*\}/);
+    if (!jm) throw new Error("JSON parse failed");
+    return new Response(JSON.stringify({ success: true, result: JSON.parse(jm[0]) }), { headers });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
+  }
+}
+
+// ═══════════════════════════════════════
+// /hl-timestamps — 유튜브 타임스탬프 생성
+// ═══════════════════════════════════════
+
+async function handleHlTimestamps(body, env, headers) {
+  if (!body.script) return new Response(JSON.stringify({ error: "script required" }), { status: 400, headers });
+  if (!env.OPENAI_API_KEY) return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), { status: 500, headers });
+
+  const tsPrompt = `당신은 유튜브 인터뷰 영상의 챕터(타임스탬프)를 생성하는 전문가입니다.
+
+## 작업
+인터뷰 원고를 읽고, 유튜브 영상 설명란에 넣을 타임스탬프(챕터)를 생성합니다.
+
+## 핵심 규칙
+1. 토픽이 전환되는 지점을 찾아서 5~10개의 챕터로 나누기
+2. 각 챕터의 제목은 시청자가 검색할 만한 구체적이고 흥미로운 문구 (SEO 최적화)
+3. "인트로", "아웃트로", "마무리" 같은 일반적인 제목 대신 내용을 반영한 제목 사용
+4. 각 챕터 전환점이 원고 어디에 있는지 "해당 구간의 첫 문장"을 anchor_text로 제공
+
+## 중요
+- 원고의 화자 타임스탬프는 편집 전 원본 시간이므로 무시하세요
+- 최종 영상 시간은 별도로 계산됩니다
+- 당신은 오직 "토픽 전환점"과 "소제목"만 잡아주면 됩니다
+
+## 출력 형식 (JSON만 출력)
+{
+  "chapters": [
+    {
+      "title": "챕터 제목 (검색 최적화된 구체적 문구)",
+      "anchor_text": "이 챕터가 시작되는 원고의 첫 문장 또는 핵심 구절 (정확히 발췌)",
+      "summary": "이 구간에서 다루는 내용 한 줄 요약"
+    }
+  ],
+  "video_title_suggestion": "영상 전체를 아우르는 제목 제안 (선택)"
+}
+
+## 규칙
+- 첫 번째 챕터는 영상 시작 부분 (인트로 대신 내용 반영 제목)
+- 5~10개 챕터 생성
+- anchor_text는 원고에서 정확히 발췌 (수정하지 말 것)
+- 챕터 제목은 15자 이내로 간결하게`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.OPENAI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4.1",
+        messages: [{ role: "system", content: tsPrompt }, { role: "user", content: compressScriptForHl(body.script, 14000) }],
+        temperature: 0.4, max_tokens: 2000,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    const content = data.choices?.[0]?.message?.content || "";
+    const jm = content.match(/\{[\s\S]*\}/);
+    if (!jm) throw new Error("JSON parse failed");
+    return new Response(JSON.stringify({ success: true, result: JSON.parse(jm[0]) }), { headers });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
+  }
+}
+
+// ═══════════════════════════════════════
+// /setgen — 세트 생성 (키워드+트렌드+3종 GPT)
+// ═══════════════════════════════════════
+
+const SETGEN_KEYWORD_SYSTEM = `인터뷰 원고에서 유튜브 검색에 활용할 핵심 키워드를 추출합니다.
+JSON만 출력. 다른 텍스트 없이.
+{"keywords":["키워드1","키워드2",...],"guest_summary":"게스트 한줄 소개","notable_quotes":["인상적 발언1","인상적 발언2"]}
+규칙:
+- keywords: 6~10개. 고유명사(인물, 기업, 서비스명) 우선. "AI 커머스"처럼 구체화
+- notable_quotes: 원고에서 게스트가 한 인상적 발언 3~5개 (원문 그대로). 직관적이고 파급력 있는 표현 우선`;
+
+function makeSetgenPrompt(type) {
+  var typeGuide = {
+    balanced: "## 이번 후보: ⚖️ 밸런스형\n원고의 핵심 발언 + 시의성 있는 트렌드의 교집합을 찾아 앵글을 잡습니다.\n- 썸네일/제목: 원고 내용에 충실하되, 트렌드 데이터에서 시의성이 확인된 표현을 자연스럽게 활용\n- 설명문: 원고 내용 요약 + \"지금 왜 이 주제가 중요한지\" 시의성 연결",
+    script: "## 이번 후보: 📝 스크립트 충실형\n게스트만의 독보적 시각과 인상적 발언을 최대한 살립니다.\n- 썸네일/제목: 게스트의 실제 발언이나 비유를 직접 활용. 트렌드 키워드를 억지로 넣지 않음\n- 설명문: 게스트의 분석과 주장을 충실하게 전달\n- \"이 게스트가 아니면 들을 수 없는 이야기\"가 드러나야 함",
+    focus: "## 이번 후보: 🎯 선택과 집중\n편집자가 지정한 키워드를 중심 앵글로 세트를 만듭니다.\n\n★ 가장 중요한 규칙: 키워드가 언급된 특정 문장 하나만 보지 마세요.\n원고 전체에서 해당 키워드와 관련된 모든 맥락을 파악한 뒤 세트를 만드세요.\n- 게스트가 왜 이 주제를 꺼냈는가 (배경)\n- 어떤 흐름과 논리로 설명하고 있는가 (전개)\n- 어떤 결론이나 전망을 제시하는가 (핵심 메시지)\n이 세 가지를 종합해서 \"이 영상에서 [키워드]에 대해 알 수 있는 것\"의 전체 그림을 세트에 담으세요.\n\n- 썸네일/제목: 키워드 관련 전체 맥락에서 가장 임팩트 있는 앵글을 잡을 것\n- 설명문: 키워드와 관련된 게스트의 분석 흐름을 충실하게 요약",
+    trend: "## 이번 후보: 🔍 시의성 극대화형\n지금 사람들이 관심 있는 주제와 원고 내용의 교집합을 극대화합니다.\n- 썸네일/제목: 뉴스건수가 많거나 급상승 중인 키워드를 앞에 배치. \"지금 뜨는 주제\"임을 즉시 느끼게\n- 설명문: 현재 이슈 → 원고의 분석 → 왜 지금 봐야 하는지 순서로 구성\n- 트렌드 데이터에서 뉴스 건수가 가장 많은 키워드, 급상승 매칭된 키워드를 최우선 활용",
+  };
+
+  return `당신은 유튜브 인터뷰 채널 'ttimes'의 편집자입니다.
+
+## ttimes 채널 특성
+- 구독자 수만~수십만 규모의 테크/비즈니스 심층 인터뷰 채널
+- 시청자 유입의 69%가 홈 피드 추천(41%)과 추천 동영상(28%)
+- 검색 유입은 11.7%에 불과 → 태그/검색 최적화보다 CTR이 핵심
+- 현재 노출 클릭률 3.5% → 4~5%로 올리는 것이 최우선 목표
+
+## 세트 생성의 핵심 원칙
+### 1. 썸네일/제목: 홈 피드에서 스크롤을 멈추게 하는 것
+- "정보 격차(information gap)" — 모르면 손해일 것 같은 느낌
+- 구체적 숫자, 고유명사, 대비 구조가 효과적
+
+### 2. 시의성이 CTR을 올린다
+- 트렌드 데이터에서 뉴스 건수가 많은 키워드 = 지금 사람들이 관심 있는 주제
+
+### 3. Quality CTR
+- 썸네일/제목이 약속한 것을 영상이 반드시 전달해야 함
+- 원고에 분명히 있는 내용만 활용
+
+### 4. 썸네일+제목 "1+1=3" 원칙 (가장 중요)
+- 썸네일과 제목은 서로 다른 정보를 전달해야 함
+- 보완 패턴: (A) 감정/훅+맥락, (B) 결과/수치+원인/질문, (C) 발언+프레이밍
+
+${typeGuide[type]}
+
+## 출력 형식 (JSON만 출력)
+{
+  "tags": [{"tag":"키워드","source":"trend|script|both","reason":"근거"}],
+  "thumbnail": {"lines":["줄1","줄2","줄3(선택)"],"reason":"앵글 선택 이유"},
+  "youtube_title": {"text":"제목","reason":"CTR 전략"},
+  "description": {"text":"설명문","reason":"구성 전략"}
+}
+
+## 태그 규칙: 12~15개 (1단어 5~6개, 2단어 6~8개, 3단어 1~2개)
+## 썸네일: 2~3줄, 핵심 훅 + 구체적 정보
+## 유튜브 제목: 40~60자, 핵심 주제어 앞 20자, (게스트명 직함) 형식 끝
+## 설명문: 4~6문장, 시의성→인사이트→게스트 소개
+
+## 트렌드 데이터 해석법
+- 🔥급상승 = Google Trends 급상승 → 시의성 최고
+- 📰뉴스 N건 = 최근 24시간 뉴스 기사 수
+- 급상승 + 뉴스 많음 + 원고 내용 = 최적의 앵글`;
+}
+
+async function getYTSuggestions(keyword) {
+  try {
+    var res = await fetch("https://clients1.google.com/complete/search?client=youtube&hl=ko&gl=kr&ds=yt&q=" + encodeURIComponent(keyword), { headers: { "User-Agent": "Mozilla/5.0" } });
+    var text = await res.text();
+    var s = text.indexOf("["), e = text.lastIndexOf("]") + 1;
+    if (s === -1) return [];
+    return (JSON.parse(text.substring(s, e))[1] || []).map(function(i) { return i[0]; });
+  } catch (e) { return []; }
+}
+
+async function getGoogleSuggestions(keyword) {
+  try {
+    var res = await fetch("https://suggestqueries.google.com/complete/search?client=firefox&hl=ko&gl=kr&q=" + encodeURIComponent(keyword), { headers: { "User-Agent": "Mozilla/5.0" } });
+    return (await res.json())[1] || [];
+  } catch (e) { return []; }
+}
+
+async function getGoogleTrendsRSS() {
+  try {
+    var res = await fetch("https://trends.google.com/trending/rss?geo=KR", { headers: { "User-Agent": "Mozilla/5.0" } });
+    var xml = await res.text();
+    var titles = [];
+    var re = /<title><!\[CDATA\[([^\]]+)\]\]><\/title>/g;
+    var m;
+    while ((m = re.exec(xml)) !== null) { titles.push(m[1]); }
+    if (titles.length <= 1) {
+      re = /<item>[\s\S]*?<title>([^<]+)<\/title>/g;
+      while ((m = re.exec(xml)) !== null) { titles.push(m[1]); }
+    }
+    return titles.slice(0, 20);
+  } catch (e) { return []; }
+}
+
+async function getNewsCount(keyword) {
+  try {
+    var url = "https://news.google.com/rss/search?q=" + encodeURIComponent(keyword) + "+when:1d&hl=ko&gl=KR&ceid=KR:ko";
+    var res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    var xml = await res.text();
+    return (xml.match(/<item>/g) || []).length;
+  } catch (e) { return 0; }
+}
+
+async function callGPTForSetgen(system, user, apiKey, maxTokens, temp) {
+  var res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "gpt-4.1", messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: temp, max_tokens: maxTokens }),
+  });
+  var data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  var content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
+  var jm = content.match(/\{[\s\S]*\}/);
+  if (!jm) throw new Error("JSON parse failed: " + content.substring(0, 300));
+  return JSON.parse(jm[0]);
+}
+
+async function handleSetgen(body, env, headers) {
+  var script = body.script, guest_name = body.guest_name, guest_title = body.guest_title;
+  var focus_keyword = body.focus_keyword || "";
+  if (!script) return new Response(JSON.stringify({ success: false, error: "script required" }), { status: 400, headers });
+  if (!env.OPENAI_API_KEY) return new Response(JSON.stringify({ success: false, error: "OPENAI_API_KEY not configured" }), { status: 500, headers });
+
+  try {
+    // Step 1: 키워드 + 인상적 발언 추출
+    var kwResult = await callGPTForSetgen(SETGEN_KEYWORD_SYSTEM, compressScriptForHl(script, 10000), env.OPENAI_API_KEY, 800, 0.3);
+    var keywords = kwResult.keywords || [];
+    var guestSummary = kwResult.guest_summary || "";
+    var notableQuotes = kwResult.notable_quotes || [];
+
+    // Step 2: 트렌드 데이터 병렬 수집
+    var trendData = {};
+    var kwSlice = keywords.slice(0, 8);
+    var acPromises = kwSlice.map(function(kw) {
+      return Promise.all([getYTSuggestions(kw), getGoogleSuggestions(kw), getNewsCount(kw)]).then(function(r) {
+        trendData[kw] = { youtube: r[0].slice(0, 8), google: r[1].slice(0, 8), news_24h: r[2] };
+      });
+    });
+    var trendsPromise = getGoogleTrendsRSS();
+    var results = await Promise.all([Promise.all(acPromises), trendsPromise]);
+    var trendingNow = results[1] || [];
+
+    // Step 3: 트렌드 블록 포맷
+    var tb = "## 실시간 트렌드 데이터\n\n";
+    tb += "### 🔥 Google Trends 한국 급상승 검색어 (상위 20)\n";
+    if (trendingNow.length > 0) { trendingNow.forEach(function(t, i) { tb += (i + 1) + ". " + t + "\n"; }); }
+    else { tb += "(수집 실패)\n"; }
+
+    tb += "\n### 키워드별 시의성 지표\n\n";
+    for (var kw in trendData) {
+      var d = trendData[kw];
+      tb += '#### "' + kw + '" 📰뉴스 ' + d.news_24h + '건/24h';
+      var matched = trendingNow.filter(function(t) { return t.indexOf(kw) >= 0 || kw.indexOf(t) >= 0; });
+      if (matched.length > 0) tb += " 🔥급상승";
+      tb += "\n";
+      if (d.youtube.length > 0) tb += "YT자동완성: " + d.youtube.slice(0, 5).map(function(s, i) { return (i+1) + "." + s; }).join(" | ") + "\n";
+      if (d.google.length > 0) tb += "Google자동완성: " + d.google.slice(0, 5).map(function(s, i) { return (i+1) + "." + s; }).join(" | ") + "\n";
+      tb += "\n";
+    }
+
+    var quotesBlock = "";
+    if (notableQuotes.length > 0) {
+      quotesBlock = "\n## 게스트 인상적 발언 (원문)\n";
+      notableQuotes.forEach(function(q, i) { quotesBlock += (i+1) + '. "' + q + '"\n'; });
+    }
+
+    // Step 4: 3개 후보 개별 호출
+    var guestInfo = "## 게스트\n- 이름: " + (guest_name || "(추출)") + "\n- 직함: " + (guest_title || guestSummary || "(추출)") + "\n\n";
+    var scriptBlock = "\n## 인터뷰 원고\n" + compressScriptForHl(script, 7000);
+    var userBase = guestInfo + tb + quotesBlock + scriptBlock;
+
+    var thirdType, thirdPrompt, thirdUser, thirdTemp;
+    if (focus_keyword.trim()) {
+      thirdType = "focus";
+      thirdPrompt = makeSetgenPrompt("focus");
+      thirdUser = guestInfo + tb + quotesBlock + "\n## 🎯 편집자 지정 앵글\n키워드: " + focus_keyword + "\n" + scriptBlock;
+      thirdTemp = 0.75;
+    } else {
+      thirdType = "script";
+      thirdPrompt = makeSetgenPrompt("script");
+      thirdUser = userBase;
+      thirdTemp = 0.7;
+    }
+
+    var setResults = await Promise.all([
+      callGPTForSetgen(makeSetgenPrompt("balanced"), userBase, env.OPENAI_API_KEY, 2000, 0.8),
+      callGPTForSetgen(makeSetgenPrompt("trend"), userBase, env.OPENAI_API_KEY, 2000, 0.85),
+      callGPTForSetgen(thirdPrompt, thirdUser, env.OPENAI_API_KEY, 2000, thirdTemp),
+    ]);
+
+    // 결과 병합
+    var merged = {
+      tags: [],
+      thumbnail: [
+        Object.assign({ type: "balanced" }, setResults[0].thumbnail),
+        Object.assign({ type: "trend" }, setResults[1].thumbnail),
+        Object.assign({ type: thirdType }, setResults[2].thumbnail),
+      ],
+      youtube_title: [
+        Object.assign({ type: "balanced" }, setResults[0].youtube_title),
+        Object.assign({ type: "trend" }, setResults[1].youtube_title),
+        Object.assign({ type: thirdType }, setResults[2].youtube_title),
+      ],
+      description: [
+        Object.assign({ type: "balanced" }, setResults[0].description),
+        Object.assign({ type: "trend" }, setResults[1].description),
+        Object.assign({ type: thirdType }, setResults[2].description),
+      ],
+    };
+
+    // 태그 병합
+    var tagMap = {};
+    setResults.forEach(function(sr) {
+      (sr.tags || []).forEach(function(t) {
+        if (!tagMap[t.tag]) tagMap[t.tag] = t;
+        else if (t.source === "both") tagMap[t.tag] = t;
+      });
+    });
+    merged.tags = Object.values(tagMap).slice(0, 15);
+
+    return new Response(JSON.stringify({
+      success: true, result: merged, trend_data: trendData, trending_now: trendingNow,
+      keywords_extracted: keywords, notable_quotes: notableQuotes, focus_keyword: focus_keyword,
+    }), { headers });
+  } catch (e) {
+    return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
+  }
 }

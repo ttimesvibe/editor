@@ -4,7 +4,7 @@ import * as mammoth from "mammoth";
 // ── Utils ──
 import { loadConfig, saveConfig } from "./utils/config.js";
 import { loadDictionary, syncDictionaryFromServer, updateDictionary } from "./utils/dictionary.js";
-import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit } from "./utils/api.js";
+import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab } from "./utils/api.js";
 import { parseDocxWithTrackChanges } from "./utils/docxParser.js";
 import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlocks, splitChunks, chunkToText, chunkCtx } from "./utils/lengthModel.js";
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
@@ -16,6 +16,10 @@ import { GuideCard } from "./components/GuideCard.jsx";
 import { ShareModal, SessionListModal, SettingsModal } from "./components/Modals.jsx";
 import { EditorialSummaryPanel } from "./components/EditorialSummaryPanel.jsx";
 import { TermReviewScreen } from "./components/TermReviewScreen.jsx";
+
+// ── Tabs ──
+import { HighlightTab } from "./tabs/HighlightTab.jsx";
+import { SetgenTab } from "./tabs/SetgenTab.jsx";
 
 // ═══════════════════════════════════════════════
 // MAIN APP
@@ -290,6 +294,17 @@ export default function App() {
         ? `\n\n[화자명 라인에서 추출한 정확한 화자명 목록: ${speakerNames.join(", ")}]\n이 이름들은 사람이 직접 입력한 것이므로 정답 기준입니다. 본문 속에서 이와 다르게 표기된 이름은 STT 오인식으로 판단하세요.\n`
         : "";
       const a = await apiAnalyze(speakerHint + ft, cfg, dictNormalized); setAnal(a);
+      // 메타데이터 저장 (하이라이트/세트 탭에서 활용)
+      if (sessionIdRef.current) {
+        const metadata = {
+          interviewee: a.speakers?.[0] ? `${a.speakers[0].name} ${a.speakers[0].role || ""}`.trim() : "",
+          topic: a.overview?.topic || "",
+          keywords: a.overview?.keywords || [],
+          speakers: a.speakers || [],
+          genre: a.genre || null,
+        };
+        apiSaveTab(sessionIdRef.current, "metadata", metadata, cfg, fn).catch(() => {});
+      }
       const newTerms = a.term_corrections || [];
       // Step 0 term_corrections 중 단어장에 이미 있는 항목 제외
       // 정규화 비교: 대소문자 무시 + wrong/correct 양쪽 모두 체크
@@ -718,7 +733,7 @@ export default function App() {
           읽기 전용
         </span>}
         {hasData&&!termReview && <div style={{display:"flex",gap:2,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
-          {[["review","0차 원고검토"],["correction","1차 교정"],["script","스크립트 편집"],["guide","편집 가이드"]].map(([id,l])=>
+          {[["review","0차 원고검토"],["correction","1차 교정"],["script","스크립트 편집"],["guide","편집 가이드"],["highlight","하이라이트"],["setgen","세트 생성"]].map(([id,l])=>
             <button key={id} onClick={()=>setTab(id)} style={{padding:"5px 14px",borderRadius:5,border:"none",cursor:"pointer",
               fontSize:12,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
               color:tab===id?"#fff":C.txM,transition:"all 0.12s",
@@ -1632,6 +1647,44 @@ export default function App() {
           })()}
         </div>}
       </>}
+
+      {/* ── 하이라이트 탭 ── */}
+      {!termReview&&hasData&&tab==="highlight" && <HighlightTab
+        script={(() => {
+          const corrected = blocks.map(b => {
+            const se = scriptEdits[b.index];
+            if (se !== undefined) return se;
+            return getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index));
+          }).join("\n");
+          return corrected || blocks.map(b => b.text).join("\n");
+        })()}
+        blocks={blocks.map(b => ({ id: b.index, speaker: b.speaker, time: b.timestamp, text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) }))}
+        sessionId={sessionId}
+        config={cfg}
+        onSave={(data) => {
+          if (sessionId) apiSaveTab(sessionId, "highlight", data, cfg, fn).catch(()=>{});
+        }}
+      />}
+
+      {/* ── 세트 생성 탭 ── */}
+      {!termReview&&hasData&&tab==="setgen" && <SetgenTab
+        script={(() => {
+          const corrected = blocks.map(b => {
+            const se = scriptEdits[b.index];
+            if (se !== undefined) return se;
+            return getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index));
+          }).join("\n");
+          return corrected || blocks.map(b => b.text).join("\n");
+        })()}
+        guestName={anal?.speakers?.[0]?.name?.split(" ")[0] || ""}
+        guestTitle={anal?.speakers?.[0] ? `${anal.speakers[0].name} ${anal.speakers[0].role || ""}`.trim() : ""}
+        sessionId={sessionId}
+        config={cfg}
+        keywords={anal?.overview?.keywords || []}
+        onSave={(data) => {
+          if (sessionId) apiSaveTab(sessionId, "setgen", data, cfg, fn).catch(()=>{});
+        }}
+      />}
     </main>
 
     {showSet && <SettingsModal config={cfg} onSave={saveCfg} onClose={()=>setShowSet(false)}/>}
