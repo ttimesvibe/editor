@@ -323,8 +323,8 @@ export function ModifyTab({ sessionId, config, onSave }) {
         const r = await fetch(`${base}/load/${sessionId}/modify`);
         if (!r.ok) { setLoaded(true); return; }
         const d = await r.json();
-        if (d && d.data) {
-          const data = d.data;
+        {
+          const data = d?.data || d; // data.data (레거시) 또는 d 직접
           setVideoUrl(data.videoUrl || "");
           setVideoId(data.videoId || "");
           setTitle(data.title || "");
