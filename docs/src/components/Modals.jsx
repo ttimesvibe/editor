@@ -48,9 +48,10 @@ export function SessionListModal({ config, onLoad, onClose }) {
   useEffect(() => {
     if (!config.workerUrl || config.apiMode === "mock") { setLoading(false); return; }
     const _tk = localStorage.getItem("ttimes_token");
-    fetch(`${config.workerUrl}/sessions`, { headers: _tk ? { "Authorization": `Bearer ${_tk}` } : {} })
-      .then(r => r.json())
-      .then(d => { if (d.success) setSessions(d.sessions || []); })
+    if (!_tk) { setLoading(false); return; }
+    fetch(`${config.workerUrl}/sessions`, { headers: { "Authorization": `Bearer ${_tk}` } })
+      .then(r => { if (r.status === 401) { localStorage.removeItem("ttimes_token"); localStorage.removeItem("ttimes_user"); window.location.reload(); return null; } return r.json(); })
+      .then(d => { if (d?.success) setSessions(d.sessions || []); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [config]);
