@@ -476,8 +476,8 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
         const r = await fetch(`${base}/load/${sessionId}/visual`);
         if (!r.ok) return;
         const data = await r.json();
-        if (data && data.data) {
-          const d = data.data;
+        const d = data?.data || data; // data.data (레거시) 또는 data 직접
+        if (d && (d.visualGuides || d.insertCuts || d.manualResources)) {
           setVisualGuides(d.visualGuides || []);
           setInsertCuts(d.insertCuts || []);
           setVerdicts(d.verdicts || {});

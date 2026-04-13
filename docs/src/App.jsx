@@ -280,8 +280,8 @@ export default function App() {
           missing.map(t => apiLoadTab(sessionId, t, cfg))
         );
         results.forEach((r, i) => {
-          if (r.status === "fulfilled" && r.value?.data) {
-            cache[missing[i]] = r.value.data;
+          if (r.status === "fulfilled" && r.value) {
+            cache[missing[i]] = r.value.data || r.value; // data.data (레거시) 또는 직접
           }
         });
         setExportCache(cache);

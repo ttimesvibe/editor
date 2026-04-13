@@ -1826,54 +1826,56 @@ async function handleTermExplain(body, env, headers) {
 
   const userMessage = `용어: ${term}${context ? `\n\n참고 맥락:\n${context}` : ""}`;
 
-  // 1차: Gemini 시도
+  // Gemini 모델 순차 시도: 2.0-flash (안정) → 2.5-flash (최신) → OpenAI 폴백
   const geminiKey = env.GEMINI_API_KEY;
+  const geminiModels = ["gemini-2.0-flash", "gemini-2.5-flash"];
   if (geminiKey) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: systemPrompt + "\n\n" + userMessage }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
-          }),
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        if (text) {
-          let jsonStr = text.trim();
-          const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-          if (fenceMatch) jsonStr = fenceMatch[1].trim();
-          const braceStart = jsonStr.indexOf('{');
-          const braceEnd = jsonStr.lastIndexOf('}');
-          if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.substring(braceStart, braceEnd + 1);
-          try {
-            const result = JSON.parse(jsonStr);
-            return new Response(JSON.stringify({ success: true, result }), { headers });
-          } catch {
-            return new Response(JSON.stringify({ success: true, result: { explanation: text.trim() } }), { headers });
+    for (const model of geminiModels) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: systemPrompt + "\n\n" + userMessage }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+            }),
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          if (text) {
+            let jsonStr = text.trim();
+            const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (fenceMatch) jsonStr = fenceMatch[1].trim();
+            const braceStart = jsonStr.indexOf('{');
+            const braceEnd = jsonStr.lastIndexOf('}');
+            if (braceStart !== -1 && braceEnd !== -1) jsonStr = jsonStr.substring(braceStart, braceEnd + 1);
+            try {
+              const result = JSON.parse(jsonStr);
+              return new Response(JSON.stringify({ success: true, result }), { headers });
+            } catch {
+              return new Response(JSON.stringify({ success: true, result: { explanation: text.trim() } }), { headers });
+            }
           }
         }
+        console.warn(`Gemini ${model} failed: ${response.status}`);
+      } catch (e) {
+        console.warn(`Gemini ${model} error: ${e.message}`);
       }
-      // Gemini 실패 → OpenAI 폴백
-      console.warn("Gemini failed, falling back to OpenAI:", response.status);
-    } catch (e) {
-      console.warn("Gemini error, falling back to OpenAI:", e.message);
     }
   }
 
-  // 2차: OpenAI 폴백
+  // 최종 폴백: OpenAI (워커 리전이 US일 때만 작동)
   if (!env.OPENAI_API_KEY) {
-    return new Response(JSON.stringify({ error: "API key not configured (both Gemini and OpenAI unavailable)" }), { status: 500, headers });
+    return new Response(JSON.stringify({ error: "All AI providers failed (Gemini unavailable, OpenAI key missing)" }), { status: 502, headers });
   }
   try {
-    const result = await callOpenAI(systemPrompt, userMessage, env, { model: "gpt-5.4-mini", temperature: 0.3, max_tokens: 2000 });
+    const result = await callOpenAI(systemPrompt, userMessage, env, { model: "gpt-4.1-mini", temperature: 0.3, max_tokens: 2000 });
     if (result.error) {
-      return new Response(JSON.stringify({ error: `OpenAI fallback: ${result.error}` }), { status: result.status || 502, headers });
+      return new Response(JSON.stringify({ error: `All providers failed. Last: ${result.error}` }), { status: result.status || 502, headers });
     }
     return new Response(JSON.stringify({ success: true, result: result.content }), { headers });
   } catch (e) {
