@@ -20,6 +20,7 @@ import { TermReviewScreen } from "./components/TermReviewScreen.jsx";
 // ── Tabs ──
 import { HighlightTab } from "./tabs/HighlightTab.jsx";
 import { SetgenTab } from "./tabs/SetgenTab.jsx";
+import { VisualTab } from "./tabs/VisualTab.jsx";
 
 // ═══════════════════════════════════════════════
 // MAIN APP
@@ -733,7 +734,7 @@ export default function App() {
           읽기 전용
         </span>}
         {hasData&&!termReview && <div style={{display:"flex",gap:2,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
-          {[["review","0차 원고검토"],["correction","1차 교정"],["script","스크립트 편집"],["guide","편집 가이드"],["highlight","하이라이트"],["setgen","세트 생성"]].map(([id,l])=>
+          {[["review","0차 원고검토"],["correction","1차 교정"],["script","스크립트 편집"],["guide","편집 가이드"],["highlight","하이라이트"],["setgen","세트 생성"],["visual","자료 & 그래픽"]].map(([id,l])=>
             <button key={id} onClick={()=>setTab(id)} style={{padding:"5px 14px",borderRadius:5,border:"none",cursor:"pointer",
               fontSize:12,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
               color:tab===id?"#fff":C.txM,transition:"all 0.12s",
@@ -1684,6 +1685,24 @@ export default function App() {
         keywords={anal?.overview?.keywords || []}
         onSave={(data) => {
           if (sessionId) apiSaveTab(sessionId, "setgen", data, cfg, fn).catch(()=>{});
+        }}
+      />}
+
+      {/* ── 자료 & 그래픽 탭 ── */}
+      {!termReview&&hasData&&tab==="visual" && <VisualTab
+        script={(() => {
+          const corrected = blocks.map(b => {
+            const se = scriptEdits[b.index];
+            if (se !== undefined) return se;
+            return getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index));
+          }).join("\n");
+          return corrected || blocks.map(b => b.text).join("\n");
+        })()}
+        blocks={blocks.map(b => ({ index: b.index, speaker: b.speaker, timestamp: b.timestamp, text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) }))}
+        sessionId={sessionId}
+        config={cfg}
+        onSave={(data) => {
+          if (sessionId) apiSaveTab(sessionId, "visual", data, cfg, fn).catch(()=>{});
         }}
       />}
     </main>

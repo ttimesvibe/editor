@@ -1,5 +1,5 @@
 // ttimes-editor — Cloudflare Worker
-// 6개 엔드포인트: /analyze, /correct, /highlights, /visuals, /save, /load/:id
+// 7개 엔드포인트: /analyze, /correct, /highlights, /visuals, /insert-cuts, /save, /load/:id
 // OpenAI GPT-5.1 API 프록시 + CORS 완전 제어 + KV 세션 저장
 // /correct: v4 통합 교정 (필러+용어+맞춤법+구어체 단일 호출 + 코드 검증)
 // /highlights: v2 룰북 기반 2-Pass (Draft Agent → Editor Agent) + 청크 분할 지원
@@ -74,6 +74,7 @@ if (path === "/debug-location") {
       else if (path === "/highlights") return await handleHighlights(body, env, corsHeaders);
       else if (path === "/term-explain") return await handleTermExplain(body, env, corsHeaders);
       else if (path === "/visuals") return await handleVisuals(body, env, corsHeaders);
+      else if (path === "/insert-cuts") return await handleInsertCuts(body, env, corsHeaders);
       else if (path === "/hl-recommend") return await handleHlRecommend(body, env, corsHeaders);
       else if (path === "/hl-timestamps") return await handleHlTimestamps(body, env, corsHeaders);
       else if (path === "/setgen") return await handleSetgen(body, env, corsHeaders);
@@ -1865,14 +1866,192 @@ async function handleTermExplain(body, env, headers) {
 }
 
 // ═══════════════════════════════════════
-// /visuals — 3단계 stub
+// /visuals — 시각화 가이드 생성
 // ═══════════════════════════════════════
 
-function handleVisuals(body, env, headers) {
+const VISUAL_TYPES_SPEC = `## 지원하는 21가지 시각화 타입 & chart_data 구조
+
+1. bar — 세로 막대: { labels:["A","B"], datasets:[{label:"시리즈1",data:[10,20]}], unit:"%" }
+2. bar_horizontal — 가로 막대: 동일 구조
+3. bar_stacked — 누적 막대: 동일 구조, datasets 2개 이상
+4. line — 라인 차트: { labels:["1월","2월"], datasets:[{label:"매출",data:[100,200]}], unit:"억원" }
+5. area — 영역 차트: line과 동일 구조
+6. donut — 도넛: { labels:["A","B"], datasets:[{data:[60,40],colors:["#3B82F6","#EF4444"]}], unit:"%" }
+7. comparison — 비교: { columns:[{label:"찬성",tone:"positive",items:["항목1"]},{label:"반대",tone:"negative",items:["항목1"]}], footer:"요약" }
+8. table — 표: { headers:["항목","값"], rows:[["A","100"],["B","200"]], highlight_rows:[0] }
+9. process — 프로세스: { steps:[{label:"1단계",description:"설명"}] }
+10. structure — 구조도: { items:[{label:"항목",description:"설명",color:"blue",num:1}] }
+11. timeline — 세로 타임라인: { events:[{period:"2020",label:"출시",description:"설명"}] }
+12. timeline_horizontal — 가로 타임라인: 동일 구조
+13. kpi — KPI 카드: { metrics:[{label:"매출",value:"100억",trend:"up"}] } (trend: up/down/neutral)
+14. ranking — 랭킹: { items:[{rank:1,label:"1위 항목",value:"100점",description:"설명"}] }
+15. matrix — 2x2 매트릭스: { quadrants:[{position:"top-left",label:"높은X·높은Y",items:["항목"]}], x_axis:"X축명", y_axis:"Y축명" }
+16. stack — 스택/레이어: { layers:[{label:"레이어1",description:"설명",color:"blue"}] }
+17. cycle — 순환: { steps:[{label:"단계1",description:"설명"}] }
+18. checklist — 체크리스트: { headers:["항목","조건1","조건2"], rows:[["A","O","X"]] }
+19. hierarchy — 계층도: { root:{label:"루트",children:[{label:"자식1",children:[]}]} }
+20. radar — 레이더: { labels:["축1","축2","축3"], datasets:[{label:"항목",data:[80,60,90]}] }
+21. venn — 벤 다이어그램: { sets:[{label:"A"},{label:"B"}], intersection:{label:"공통"} }
+22. network — 네트워크: { nodes:[{id:"a",label:"노드A"}], edges:[{from:"a",to:"b",label:"관계"}] }
+23. progress — 진행률: { steps:[{label:"완료",status:"done"},{label:"진행중"},{label:"미완"}], current:1 }`;
+
+const VISUALS_SYSTEM_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 시각 자료 편집 전문가입니다.
+인터뷰 대본을 읽고, 영상에 삽입할 시각 자료(차트/도표/그래픽)를 추천합니다.
+
+## 목표
+시청자가 인터뷰 내용을 더 잘 이해할 수 있도록, 발언 내용 중 수치·비교·과정·구조 등을 시각화할 구간을 선별하고 차트 데이터를 생성합니다.
+
+${VISUAL_TYPES_SPEC}
+
+## 규칙
+1. 인터뷰 원문에서 언급된 수치나 정보를 기반으로 chart_data를 구성하세요. 없는 수치를 만들지 마세요.
+2. 각 시각 자료에 block_range를 지정하세요 — 시각 자료가 화면에 표시될 구간(블록 인덱스 범위)입니다.
+3. type은 내용에 가장 적합한 것을 선택하세요.
+4. 청크당 2~5개 생성. 모든 블록에 만들 필요 없음 — 시각화가 효과적인 구간만 선별.
+5. priority: "high"(반드시 필요), "medium"(있으면 좋음), "low"(선택)
+6. duration_seconds: 해당 시각 자료가 화면에 표시될 예상 시간(초) — 보통 5~15초
+
+## 출력 (JSON만, 코드블록 없이)
+{
+  "visual_guides": [
+    {
+      "type": "bar|line|donut|...",
+      "title": "차트 제목",
+      "chart_data": { ... },
+      "block_range": [시작블록, 끝블록],
+      "reason": "이 구간에 시각 자료가 필요한 이유",
+      "source_text": "관련 원문 발췌 (50자 이내)",
+      "priority": "high|medium|low",
+      "duration_seconds": 10
+    }
+  ]
+}`;
+
+async function handleVisuals(body, env, headers) {
+  const blocks = body.blocks || [];
+  if (blocks.length === 0) {
+    return new Response(JSON.stringify({ error: "blocks가 비어있습니다." }), { status: 400, headers });
+  }
+
+  const chunkIndex = body.chunk_index ?? 0;
+  const totalChunks = body.total_chunks ?? 1;
+  const existingCount = body.existing_count ?? 0;
+  const preferredType = body.preferred_type || null;
+  const selectedText = body.analysis?.selected_text || null;
+
+  let userMsg = `## 인터뷰 대본 (청크 ${chunkIndex + 1}/${totalChunks})\n\n`;
+  for (const b of blocks) {
+    userMsg += `[블록 ${b.index}] ${b.speaker} ${b.timestamp}\n${b.text}\n\n`;
+  }
+
+  if (selectedText) {
+    userMsg += `\n## 편집자 선택 텍스트 (이 부분을 중점적으로 시각화)\n"${selectedText}"\n`;
+  }
+  if (preferredType) {
+    userMsg += `\n## 재생성 지시: 반드시 "${preferredType}" 타입으로 생성하세요.\n`;
+  }
+  if (existingCount > 0) {
+    userMsg += `\n참고: 이미 ${existingCount}개의 시각 자료가 생성되어 있습니다. 중복되지 않는 새로운 구간을 찾아주세요.\n`;
+  }
+
+  const result = await callOpenAI(VISUALS_SYSTEM_PROMPT, userMsg, env, {
+    model: "gpt-4.1",
+    temperature: 0.3,
+    max_tokens: 8000,
+  });
+
+  if (result.error) {
+    return new Response(JSON.stringify({ error: result.error }), { status: result.status || 500, headers });
+  }
+
+  const guides = result.content?.visual_guides || [];
   return new Response(JSON.stringify({
-    success: false, status: "not_implemented",
-    message: "3단계 자료/그래픽 가이드는 룰북 완성 후 구현 예정입니다."
-  }), { status: 200, headers });
+    success: true,
+    result: { visual_guides: guides },
+  }), { headers });
+}
+
+// ═══════════════════════════════════════
+// /insert-cuts — 인서트 컷 추천
+// ═══════════════════════════════════════
+
+const INSERT_CUTS_SYSTEM_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 인서트 컷 편집 전문가입니다.
+인터뷰 대본을 읽고, 영상에 삽입할 인서트 컷(보조 영상/이미지)을 추천합니다.
+
+## 인서트 컷이란?
+인터뷰 진행 중 화자의 얼굴 대신 보여줄 보조 이미지/영상입니다. 시청자의 이해를 돕고 시각적 단조로움을 깨는 역할을 합니다.
+
+## 3가지 유형
+- **Type A (회상 일러스트)**: AI 이미지 생성(미드저니 등)으로 제작할 일러스트. 추상적 개념, 역사적 장면, 상상 속 시나리오 등. image_prompt 필수.
+- **Type B (공식 이미지/유튜브)**: 구글 검색이나 유튜브에서 찾을 수 있는 공식 자료. 기업 로고, 제품 사진, 뉴스 기사, 공식 유튜브 영상 등. search_keywords 필수.
+- **Type C (작품/성과물)**: 게스트나 관련 인물의 실제 작품, 성과, 결과물. 책 표지, 앱 스크린샷, 연구 결과 등.
+
+## 규칙
+1. 청크당 3~6개 추천
+2. 각 인서트 컷에 block_range 지정 (표시될 블록 구간)
+3. trigger_quote: 이 인서트 컷을 트리거하는 원문 발언 (정확한 인용)
+4. trigger_reason: 왜 이 지점에 인서트 컷이 필요한지
+5. instruction: 편집자에게 전달할 구체적 지시사항
+6. source_type: "illustration"(A), "official_image"(B), "official_youtube"(B), "guest_provided"(C)
+
+## 출력 (JSON만, 코드블록 없이)
+{
+  "insert_cuts": [
+    {
+      "type": "A|B|C",
+      "type_name": "회상 일러스트|공식 이미지|작품/성과물",
+      "title": "인서트컷 제목",
+      "trigger_quote": "이 인서트컷을 유발하는 원문 발언",
+      "trigger_reason": "이 지점에 인서트 컷이 필요한 이유",
+      "instruction": "편집자에게 전달할 구체적 지시",
+      "block_range": [시작블록, 끝블록],
+      "source_type": "illustration|official_image|official_youtube|guest_provided",
+      "image_prompt": "(Type A만) 미드저니 스타일 영문 프롬프트",
+      "search_keywords": ["(Type B만) 검색 키워드1", "키워드2"],
+      "youtube_search": { "query": "(Type B만) 유튜브 검색어" },
+      "asset_note": "소재 확보 시 주의사항 (선택)"
+    }
+  ]
+}`;
+
+async function handleInsertCuts(body, env, headers) {
+  const blocks = body.blocks || [];
+  if (blocks.length === 0) {
+    return new Response(JSON.stringify({ error: "blocks가 비어있습니다." }), { status: 400, headers });
+  }
+
+  const chunkIndex = body.chunk_index ?? 0;
+  const totalChunks = body.total_chunks ?? 1;
+  const existingCount = body.existing_count ?? 0;
+  const selectedText = body.analysis?.selected_text || null;
+
+  let userMsg = `## 인터뷰 대본 (청크 ${chunkIndex + 1}/${totalChunks})\n\n`;
+  for (const b of blocks) {
+    userMsg += `[블록 ${b.index}] ${b.speaker} ${b.timestamp}\n${b.text}\n\n`;
+  }
+
+  if (selectedText) {
+    userMsg += `\n## 편집자 선택 텍스트 (이 부분에 대한 인서트 컷 추천)\n"${selectedText}"\n`;
+  }
+  if (existingCount > 0) {
+    userMsg += `\n참고: 이미 ${existingCount}개의 인서트 컷이 생성되어 있습니다. 중복되지 않는 새로운 구간을 찾아주세요.\n`;
+  }
+
+  const result = await callOpenAI(INSERT_CUTS_SYSTEM_PROMPT, userMsg, env, {
+    model: "gpt-4.1",
+    temperature: 0.3,
+    max_tokens: 8000,
+  });
+
+  if (result.error) {
+    return new Response(JSON.stringify({ error: result.error }), { status: result.status || 500, headers });
+  }
+
+  const cuts = result.content?.insert_cuts || [];
+  return new Response(JSON.stringify({
+    success: true,
+    result: { insert_cuts: cuts },
+  }), { headers });
 }
 
 // ═══════════════════════════════════════
