@@ -733,11 +733,11 @@ export default function App() {
           background:"rgba(168,85,247,0.15)",color:"#A855F7",border:"1px solid rgba(168,85,247,0.3)"}}>
           읽기 전용
         </span>}
-        {hasData&&!termReview && <div style={{display:"flex",gap:2,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
-          {[["review","0차 원고검토"],["correction","1차 교정"],["script","스크립트 편집"],["guide","편집 가이드"],["highlight","하이라이트"],["setgen","세트 생성"],["visual","자료 & 그래픽"]].map(([id,l])=>
-            <button key={id} onClick={()=>setTab(id)} style={{padding:"5px 14px",borderRadius:5,border:"none",cursor:"pointer",
-              fontSize:12,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
-              color:tab===id?"#fff":C.txM,transition:"all 0.12s",
+        {hasData&&!termReview && <div style={{display:"flex",gap:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
+          {[["review","0차 검토"],["correction","1차 교정"],["script","스크립트"],["guide","편집 가이드"],["highlight","하이라이트"],["setgen","세트"],["visual","자료·그래픽"]].map(([id,l])=>
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
+              fontSize:11,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
+              color:tab===id?"#fff":C.txM,transition:"all 0.12s",whiteSpace:"nowrap",
               opacity:id==="review"&&!reviewData?0.4:1,
               pointerEvents:id==="review"&&!reviewData?"none":"auto"}}>{l}{id==="guide"&&gReady?" ✓":""}</button>)}
         </div>}
