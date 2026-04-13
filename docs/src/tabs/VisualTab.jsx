@@ -362,15 +362,16 @@ function VisualMockup({ type, chart_data, title }) {
 // ═══════════════════════════════════════
 // INSERT CUT CARD
 // ═══════════════════════════════════════
-function InsertCutCard({ item, active, onClick, verdict, onVerdict, onRegenerate, busy }) {
+function InsertCutCard({ item, active, onClick, verdict, onVerdict, onRegenerate, busy, marker, isActiveMatch, matchMode, onMatchClick, onMarkerClear }) {
   const [open,setOpen]=useState(false),[cp,setCp]=useState(false);
   const info=IC_TYPE[item.type]||IC_TYPE.B;
   const blockIdx = (item.block_range||[])[0];
-  const borderC=verdict==="use"?"#22C55E":verdict==="discard"?"rgba(239,68,68,0.4)":active?info.color:C.bd;
-  const cardBg=verdict==="discard"?"rgba(239,68,68,0.05)":active?`${info.color}11`:C.sf;
+  const mc = marker?.color ? MARKER_COLORS[marker.color] : null;
+  const borderC=mc?mc.border:verdict==="use"?"#22C55E":verdict==="discard"?"rgba(239,68,68,0.4)":active?info.color:C.bd;
+  const cardBg=verdict==="discard"?"rgba(239,68,68,0.05)":mc?mc.bg.replace("0.3","0.08"):active?`${info.color}11`:C.sf;
   return <div onClick={()=>onClick&&onClick(blockIdx)} style={{border:`1px solid ${borderC}`,borderRadius:10,padding:"10px 12px",marginBottom:8,
     background:cardBg,cursor:"pointer",transition:"all 0.15s",opacity:verdict==="discard"?0.5:1,
-    boxShadow:active&&!verdict?`0 0 0 2px ${info.color}44`:"none"}}>
+    boxShadow:isActiveMatch?`0 0 0 2px ${mc?.border||C.ac}`:active&&!verdict?`0 0 0 2px ${info.color}44`:"none"}}>
     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
       <span style={{fontSize:13}}>{info.icon}</span>
       <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,background:`${info.color}22`,color:info.color}}>Type {item.type}: {item.type_name||info.label}</span>
@@ -421,6 +422,21 @@ function InsertCutCard({ item, active, onClick, verdict, onVerdict, onRegenerate
       {item.trigger_reason&&<div style={{fontSize:12,color:C.txM,marginBottom:4}}><b>트리거 사유:</b> {item.trigger_reason}</div>}
       {item.instruction&&<div style={{fontSize:12,color:C.txM}}><b>편집자 지시:</b> {item.instruction}</div>}
     </div>}
+    {/* 형광펜 팔레트 */}
+    {onMatchClick && <div style={{display:"flex",alignItems:"center",gap:3,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.bd}22`}}>
+      <span style={{fontSize:9,color:C.txD,marginRight:2}}>🖍</span>
+      {Object.entries(MARKER_COLORS).filter(([,cv])=>!cv._hidden).map(([ck,cv])=>
+        <button key={ck} onClick={e=>{e.stopPropagation();onMatchClick(ck)}}
+          title={`${cv.label} 형광펜${marker?.color===ck?" (선택됨)":""}`}
+          style={{width:16,height:16,borderRadius:3,cursor:"pointer",transition:"all 0.12s",
+            border:`2px solid ${isActiveMatch&&matchMode?.color===ck?"#fff":marker?.color===ck?cv.border:"transparent"}`,
+            background:cv.bg.replace("0.3","0.6"),
+            boxShadow:isActiveMatch&&matchMode?.color===ck?"0 0 4px rgba(255,255,255,0.5)":"none"}}/>)}
+      {marker&&<button onClick={e=>{e.stopPropagation();onMarkerClear&&onMarkerClear()}}
+        title="형광펜 지우기"
+        style={{fontSize:9,lineHeight:1,padding:"2px 4px",border:`1px solid ${C.bd}`,borderRadius:3,
+          background:"rgba(255,255,255,0.06)",color:C.txD,cursor:"pointer"}}>✕</button>}
+    </div>}
   </div>;
 }
 
@@ -443,6 +459,7 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
   const [vMatchMode, setVMatchMode] = useState(null); // { key, color, blockIdx }
   const [resAddAt, setResAddAt] = useState(null);
   const [resForm, setResForm] = useState({ text: "", type: "image" });
+  const [resEditing, setResEditing] = useState(null); // { id, text, type }
 
   const lRef = useRef(null);
   const rRef = useRef(null);
@@ -643,14 +660,32 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
   const handleDeleteResource = useCallback((id) => {
     setManualResources(prev => prev.filter(r => r.id !== id));
     setVerdicts(prev => { const n = { ...prev }; delete n[`res-${id}`]; return n; });
+    handleMarkerClear(`res-${id}`);
   }, []);
+
+  const handleSaveResource = useCallback(() => {
+    if (!resEditing || !resEditing.text.trim()) return;
+    setManualResources(prev => prev.map(r => r.id === resEditing.id ? { ...r, text: resEditing.text.trim(), type: resEditing.type } : r));
+    setResEditing(null);
+  }, [resEditing]);
 
   // ── 형광펜 ──
   const handleMarkerAdd = useCallback((key, color, blockIdx, s, e) => {
     setVisualMarkers(prev => {
       const existing = prev[key] || { color, ranges: [] };
       const prevRanges = existing.color === color ? existing.ranges : [];
-      return { ...prev, [key]: { color, ranges: [...prevRanges.filter(r => r.blockIdx !== blockIdx || r.e <= s || r.s >= e), { blockIdx, s, e }] } };
+      const newRanges = [...prevRanges];
+      let merged = false;
+      for (let i = 0; i < newRanges.length; i++) {
+        const r = newRanges[i];
+        if (r.blockIdx === blockIdx && !(e <= r.s || s >= r.e)) {
+          newRanges[i] = { blockIdx, s: Math.min(s, r.s), e: Math.max(e, r.e) };
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) newRanges.push({ blockIdx, s, e });
+      return { ...prev, [key]: { color, ranges: newRanges } };
     });
   }, []);
 
@@ -742,18 +777,6 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
                   color:subTab==="visuals"?"#3B82F6":subTab==="resources"?"#F97316":"#F59E0B"}}>{subTab==="visuals"?"📊":subTab==="resources"?"📎":"🎬"}</span>}
                 {isMatchBlock && <span style={{fontSize:9,fontWeight:600,color:MARKER_COLORS[vMatchMode.color]?.border,
                   padding:"1px 5px",borderRadius:3,background:MARKER_COLORS[vMatchMode.color]?.bg}}>🖍 드래그로 구간 선택</span>}
-                {/* 형광펜 팔레트 */}
-                {isActive && !vMatchMode && (
-                  <div style={{display:"flex",gap:3,marginLeft:"auto"}}>
-                    {Object.entries(MARKER_COLORS).filter(([,cv])=>!cv._hidden).map(([ck,cv])=>
-                      <button key={ck} onClick={e=>{e.stopPropagation();
-                        setVMatchMode({key:`manual-${b.index}-${ck}`,color:ck,blockIdx:b.index});}}
-                        title={`${cv.label} 형광펜`}
-                        style={{width:14,height:14,borderRadius:3,border:"1px solid transparent",
-                          background:cv.bg.replace("0.3","0.6"),cursor:"pointer"}}/>
-                    )}
-                  </div>
-                )}
               </div>
               <MarkedText text={b.text} blockIdx={b.index}
                 hlMarkers={visualMarkers}
@@ -889,14 +912,17 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
             {visualGuides.map((v,i)=>{
               const blockIdx=(v.block_range||[])[0]; const isActive=aBlock===blockIdx;
               const vKey=`vis-${v.id}`; const vd=verdicts[vKey]||null;
-              const borderC=vd==="use"?"#22C55E":vd==="discard"?"rgba(239,68,68,0.4)":isActive?"#3B82F6":C.bd;
-              const cardBg=vd==="discard"?"rgba(239,68,68,0.05)":isActive?"rgba(59,130,246,0.08)":C.sf;
+              const vMarker=visualMarkers[vKey]; const vMarkerColor=vMarker?.color;
+              const vMc=vMarkerColor?MARKER_COLORS[vMarkerColor]:null;
+              const isActiveMatch=vMatchMode?.key===vKey;
+              const borderC=vMc?vMc.border:vd==="use"?"#22C55E":vd==="discard"?"rgba(239,68,68,0.4)":isActive?"#3B82F6":C.bd;
+              const cardBg=vd==="discard"?"rgba(239,68,68,0.05)":vMc?vMc.bg.replace("0.3","0.08"):isActive?"rgba(59,130,246,0.08)":C.sf;
               return <div key={`v-${v.id||i}`} ref={el=>{if(el&&!cEls.current[blockIdx])cEls.current[blockIdx]=el}}
                 data-card-block={blockIdx}
                 onClick={()=>scrollTo(blockIdx)}
                 style={{border:`1px solid ${borderC}`,borderRadius:10,padding:"10px 12px",marginBottom:8,
                   background:cardBg,cursor:"pointer",transition:"all 0.15s",opacity:vd==="discard"?0.5:1,
-                  boxShadow:isActive&&!vd?"0 0 0 2px rgba(59,130,246,0.3)":"none"}}>
+                  boxShadow:isActiveMatch?`0 0 0 2px ${vMc?.border||C.ac}`:isActive&&!vd?"0 0 0 2px rgba(59,130,246,0.3)":"none"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                   <span style={{fontSize:13}}>📊</span>
                   <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,
@@ -920,6 +946,24 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
                           color:vd===o.k?o.c:C.txD}}>{o.l}</button>)}
                   </div>
                 </div>
+                {/* 형광펜 팔레트 */}
+                <div style={{display:"flex",alignItems:"center",gap:3,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.bd}22`}}>
+                  <span style={{fontSize:9,color:C.txD,marginRight:2}}>🖍</span>
+                  {Object.entries(MARKER_COLORS).filter(([,cv])=>!cv._hidden).map(([ck,cv])=>
+                    <button key={ck} onClick={e=>{e.stopPropagation();
+                      if(isActiveMatch&&vMatchMode.color===ck) setVMatchMode(null);
+                      else setVMatchMode({key:vKey,color:ck,blockIdx});}}
+                      title={`${cv.label} 형광펜${vMarkerColor===ck?" (선택됨)":""}`}
+                      style={{width:16,height:16,borderRadius:3,cursor:"pointer",transition:"all 0.12s",
+                        border:`2px solid ${isActiveMatch&&vMatchMode.color===ck?"#fff":vMarkerColor===ck?cv.border:"transparent"}`,
+                        background:cv.bg.replace("0.3","0.6"),
+                        boxShadow:isActiveMatch&&vMatchMode.color===ck?"0 0 4px rgba(255,255,255,0.5)":"none"}}/>)}
+                  {vMarker&&<button onClick={e=>{e.stopPropagation();handleMarkerClear(vKey);setVMatchMode(null)}}
+                    title="형광펜 지우기"
+                    style={{fontSize:9,lineHeight:1,padding:"2px 4px",border:`1px solid ${C.bd}`,borderRadius:3,
+                      background:"rgba(255,255,255,0.06)",color:C.txD,cursor:"pointer"}}>✕</button>}
+                  <span style={{flex:1}}/>
+                </div>
                 <div style={{display:"flex",alignItems:"center",gap:4,marginTop:8,paddingTop:6,borderTop:`1px solid ${C.bd}44`}}>
                   <select onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();handleRegenerate(v,"visuals",e.target.value||undefined);e.target.value=""}}
                     disabled={busy} value=""
@@ -937,44 +981,103 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
             {insertCuts.length===0&&<p style={{padding:30,textAlign:"center",fontSize:12,color:C.txD}}>🎬 전체 생성 또는 블록 드래그 → 구간 추천</p>}
             {insertCuts.map((ic,i)=>{
               const blockIdx=(ic.block_range||[])[0];
-              const vKey=`ic-${ic.id}`; const vd=verdicts[vKey]||null;
+              const icKey=`ic-${ic.id}`; const icVd=verdicts[icKey]||null;
+              const icMarker=visualMarkers[icKey]; const icActiveMatch=vMatchMode?.key===icKey;
               return <div key={`ic-${ic.id||i}`} ref={el=>{if(el&&!cEls.current[blockIdx])cEls.current[blockIdx]=el}}
                 data-card-block={blockIdx}>
                 <InsertCutCard item={ic} active={aBlock===blockIdx} onClick={scrollTo}
-                  verdict={vd} onVerdict={v=>handleVerdictToggle(vKey,vd,v,ic,"cyan")}
-                  onRegenerate={()=>handleRegenerate(ic,"inserts")} busy={busy}/></div>;
+                  verdict={icVd} onVerdict={v=>handleVerdictToggle(icKey,icVd,v,ic,"cyan")}
+                  onRegenerate={()=>handleRegenerate(ic,"inserts")} busy={busy}
+                  marker={icMarker} isActiveMatch={icActiveMatch} matchMode={vMatchMode}
+                  onMatchClick={ck=>{
+                    if(icActiveMatch&&vMatchMode.color===ck) setVMatchMode(null);
+                    else setVMatchMode({key:icKey,color:ck,blockIdx});
+                  }}
+                  onMarkerClear={()=>{handleMarkerClear(icKey);setVMatchMode(null)}}/></div>;
             })}
           </>}
           {subTab==="resources" && <>
             {manualResources.length===0&&<p style={{padding:30,textAlign:"center",fontSize:12,color:C.txD}}>📎 왼쪽 패널에서 블록 선택 → "📎 자료 추가" 버튼으로 수동 자료를 추가하세요</p>}
             {manualResources.map((r,i)=>{
               const rt = RES_TYPES.find(t=>t.value===r.type) || RES_TYPES[3];
-              const vKey=`res-${r.id}`; const vd=verdicts[vKey]||null;
-              const borderC=vd==="use"?"#22C55E":vd==="discard"?"rgba(239,68,68,0.4)":aBlock===r.block_index?"#F97316":C.bd;
-              const cardBg=vd==="discard"?"rgba(239,68,68,0.05)":aBlock===r.block_index?"rgba(249,115,22,0.08)":C.sf;
+              const rKey=`res-${r.id}`; const rVd=verdicts[rKey]||null;
+              const rMarker=visualMarkers[rKey]; const rMarkerColor=rMarker?.color;
+              const rMc=rMarkerColor?MARKER_COLORS[rMarkerColor]:null;
+              const rActiveMatch=vMatchMode?.key===rKey;
+              const isEditing=resEditing?.id===r.id;
+              const borderC=rMc?rMc.border:rVd==="use"?"#22C55E":rVd==="discard"?"rgba(239,68,68,0.4)":aBlock===r.block_index?"#F97316":C.bd;
+              const cardBg=rVd==="discard"?"rgba(239,68,68,0.05)":rMc?rMc.bg.replace("0.3","0.08"):aBlock===r.block_index?"rgba(249,115,22,0.08)":C.sf;
               return <div key={`r-${r.id||i}`} data-card-block={r.block_index}
                 onClick={()=>scrollTo(r.block_index)}
                 style={{border:`1px solid ${borderC}`,borderRadius:10,padding:"10px 12px",marginBottom:8,
-                  background:cardBg,cursor:"pointer",transition:"all 0.15s",opacity:vd==="discard"?0.5:1}}>
+                  background:cardBg,cursor:"pointer",transition:"all 0.15s",opacity:rVd==="discard"?0.5:1,
+                  boxShadow:rActiveMatch?`0 0 0 2px ${rMc?.border||C.ac}`:"none"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                   <span style={{fontSize:13}}>{rt.label.split(" ")[0]}</span>
                   <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,
                     background:"rgba(249,115,22,0.15)",color:"#F97316"}}>수동 추가</span>
-                  <span style={{fontSize:11,fontWeight:600,color:C.tx,flex:1,textDecoration:vd==="discard"?"line-through":"none"}}>{r.text}</span>
+                  {!isEditing && <span style={{fontSize:11,fontWeight:600,color:C.tx,flex:1,textDecoration:rVd==="discard"?"line-through":"none"}}>{r.text}</span>}
                   <span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:`${rt.color}22`,color:rt.color,fontWeight:600}}>{rt.label}</span>
                 </div>
+                {/* 인라인 편집 모드 */}
+                {isEditing && <div onClick={e=>e.stopPropagation()} style={{marginBottom:6}}>
+                  <div style={{display:"flex",gap:4,marginBottom:6}}>
+                    {RES_TYPES.map(et=>
+                      <button key={et.value} onClick={()=>setResEditing(prev=>({...prev,type:et.value}))}
+                        style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:4,cursor:"pointer",
+                          border:`1px solid ${resEditing.type===et.value?et.color:"transparent"}`,
+                          background:resEditing.type===et.value?`${et.color}22`:"rgba(255,255,255,0.04)",
+                          color:resEditing.type===et.value?et.color:C.txD}}>{et.label}</button>)}
+                  </div>
+                  <textarea value={resEditing.text} onChange={e=>setResEditing(prev=>({...prev,text:e.target.value}))}
+                    rows={2} autoFocus
+                    style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${C.bd}`,
+                      background:"rgba(0,0,0,0.3)",color:C.tx,fontSize:12,fontFamily:FN,
+                      lineHeight:1.5,resize:"vertical",outline:"none"}}
+                    onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();handleSaveResource();}if(e.key==="Escape")setResEditing(null);}}/>
+                  <div style={{display:"flex",gap:4,marginTop:4,justifyContent:"flex-end"}}>
+                    <button onClick={()=>setResEditing(null)}
+                      style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:`1px solid ${C.bd}`,
+                        background:"transparent",color:C.txM,cursor:"pointer"}}>취소</button>
+                    <button onClick={handleSaveResource}
+                      style={{fontSize:10,padding:"2px 8px",borderRadius:4,border:"none",
+                        background:"#F97316",color:"#fff",fontWeight:600,cursor:"pointer"}}>저장</button>
+                  </div>
+                </div>}
                 <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
                   <span style={{fontSize:10,color:C.txD}}>블록 #{r.block_index} · {r.speaker}</span>
                   <div style={{marginLeft:"auto",display:"flex",gap:3}}>
                     {[{k:"use",l:"사용",c:"#22C55E",bg:"rgba(34,197,94,0.15)"},{k:"discard",l:"폐기",c:"#EF4444",bg:"rgba(239,68,68,0.15)"}].map(o=>
-                      <button key={o.k} onClick={e=>{e.stopPropagation();setVerdicts(prev=>({...prev,[vKey]:vd===o.k?null:o.k}))}}
+                      <button key={o.k} onClick={e=>{e.stopPropagation();setVerdicts(prev=>({...prev,[rKey]:rVd===o.k?null:o.k}))}}
                         style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:4,cursor:"pointer",transition:"all 0.1s",
-                          border:`1px solid ${vd===o.k?o.c:"transparent"}`,background:vd===o.k?o.bg:"rgba(255,255,255,0.04)",
-                          color:vd===o.k?o.c:C.txD}}>{o.l}</button>)}
+                          border:`1px solid ${rVd===o.k?o.c:"transparent"}`,background:rVd===o.k?o.bg:"rgba(255,255,255,0.04)",
+                          color:rVd===o.k?o.c:C.txD}}>{o.l}</button>)}
+                    <button onClick={e=>{e.stopPropagation();setResEditing({id:r.id,text:r.text,type:r.type})}}
+                      title="수정"
+                      style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:4,cursor:"pointer",
+                        border:`1px solid ${C.bd}`,background:"transparent",color:C.txD}}>✏️</button>
                     <button onClick={e=>{e.stopPropagation();handleDeleteResource(r.id)}}
+                      title="삭제"
                       style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:4,cursor:"pointer",
                         border:`1px solid ${C.bd}`,background:"transparent",color:C.txD}}>🗑</button>
                   </div>
+                </div>
+                {/* 형광펜 팔레트 */}
+                <div style={{display:"flex",alignItems:"center",gap:3,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.bd}22`}}>
+                  <span style={{fontSize:9,color:C.txD,marginRight:2}}>🖍</span>
+                  {Object.entries(MARKER_COLORS).filter(([,cv])=>!cv._hidden).map(([ck,cv])=>
+                    <button key={ck} onClick={e=>{e.stopPropagation();
+                      if(rActiveMatch&&vMatchMode.color===ck) setVMatchMode(null);
+                      else setVMatchMode({key:rKey,color:ck,blockIdx:r.block_index});}}
+                      title={`${cv.label} 형광펜${rMarkerColor===ck?" (선택됨)":""}`}
+                      style={{width:16,height:16,borderRadius:3,cursor:"pointer",transition:"all 0.12s",
+                        border:`2px solid ${rActiveMatch&&vMatchMode.color===ck?"#fff":rMarkerColor===ck?cv.border:"transparent"}`,
+                        background:cv.bg.replace("0.3","0.6"),
+                        boxShadow:rActiveMatch&&vMatchMode.color===ck?"0 0 4px rgba(255,255,255,0.5)":"none"}}/>)}
+                  {rMarker&&<button onClick={e=>{e.stopPropagation();handleMarkerClear(rKey);setVMatchMode(null)}}
+                    title="형광펜 지우기"
+                    style={{fontSize:9,lineHeight:1,padding:"2px 4px",border:`1px solid ${C.bd}`,borderRadius:3,
+                      background:"rgba(255,255,255,0.06)",color:C.txD,cursor:"pointer"}}>✕</button>}
                 </div>
               </div>;
             })}
