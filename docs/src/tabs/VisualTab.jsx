@@ -736,19 +736,21 @@ export function VisualTab({ script, blocks, sessionId, config, onSave }) {
     <div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
       {/* 왼쪽: 블록 뷰 */}
       <div ref={lRef} onMouseUp={onTextMouseUp} style={{flex:1,overflowY:"auto",borderRight:`1px solid ${C.bd}`}}>
-        {/* 형광펜 모드 상태 바 */}
-        {vMatchMode && (
-          <div style={{position:"sticky",top:0,zIndex:5,padding:"6px 16px",
-            background:MARKER_COLORS[vMatchMode.color]?.bg||"rgba(251,191,36,0.3)",
-            borderBottom:`2px solid ${MARKER_COLORS[vMatchMode.color]?.border||"#FBBF24"}`,
+        {/* 형광펜 모드 상태 바 (불투명) */}
+        {vMatchMode && (() => {
+          const _mc = MARKER_COLORS[vMatchMode.color];
+          const solidBg = {yellow:"#3D3520",blue:"#1E2A3D",cyan:"#1A3038",red:"#3D1E1E",pink:"#3D1E2E",green:"#1E3D20"}[vMatchMode.color]||"#2D2A1E";
+          return <div style={{position:"sticky",top:0,zIndex:5,padding:"6px 16px",
+            background:solidBg,
+            borderBottom:`2px solid ${_mc?.border||"#FBBF24"}`,
             display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:12,fontWeight:600,color:C.tx}}>🖍 형광펜 모드 — 블록 #{vMatchMode.blockIdx}에서 드래그로 구간 선택</span>
             <span style={{flex:1}}/>
             <button onClick={()=>setVMatchMode(null)}
-              style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:5,border:`1px solid ${C.bd}`,
-                background:"rgba(255,255,255,0.1)",color:C.tx,cursor:"pointer"}}>완료</button>
-          </div>
-        )}
+              style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:5,border:`1px solid ${_mc?.border||C.bd}`,
+                background:"rgba(255,255,255,0.12)",color:C.tx,cursor:"pointer"}}>완료</button>
+          </div>;
+        })()}
         <div style={{padding:"8px 16px",fontSize:11,fontWeight:700,color:C.txD,borderBottom:`1px solid ${C.bd}`,
           position:"sticky",top:vMatchMode?38:0,background:C.bg,zIndex:2}}>
           교정본 ({blocks.length}블록) — 텍스트 드래그로 구간 추천
