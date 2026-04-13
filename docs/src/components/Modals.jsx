@@ -164,7 +164,7 @@ export function SettingsModal({ config, onSave, onClose }) {
   // 단어장 — 읽기 전용 (관리는 어드민 페이지에서)
   const [dictList] = useState(() => {
     const d = loadDictionary();
-    return d.map(t => typeof t === "string" ? t : t.correct || t.wrong).filter(Boolean);
+    return d.map(w => typeof w === "string" ? w : w.correct || w.wrong).filter(Boolean);
   });
   const save = () => {
     const ct = {};

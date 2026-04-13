@@ -501,6 +501,26 @@ function AuthenticatedApp({ authUser, onLogout }) {
     setAddForm({ subtitle: "", type: "A1" });
   }, [addingAt, addForm, blocks]);
 
+  // ── 교정된 스크립트/블록 (탭 공유용 useMemo) ── handleGuide보다 앞에 선언 필수
+  const correctedScript = useMemo(() => {
+    if (blocks.length === 0) return "";
+    return blocks.map(b => {
+      const se = scriptEdits[b.index];
+      if (se !== undefined) return se;
+      return getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index));
+    }).join("\n");
+  }, [blocks, diffs, scriptEdits]);
+
+  const correctedBlocks = useMemo(() =>
+    blocks.map(b => ({ id: b.index, speaker: b.speaker, time: b.timestamp,
+      text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) })),
+    [blocks, diffs]);
+
+  const correctedBlocksFull = useMemo(() =>
+    blocks.map(b => ({ index: b.index, speaker: b.speaker, timestamp: b.timestamp,
+      text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) })),
+    [blocks, diffs]);
+
   // Generate guide — 2-Pass: Draft → Editor (청크 분할 지원)
   const handleGuide = useCallback(async()=>{
     setGBusy(true); setErr(null); setTab("guide");
@@ -683,26 +703,6 @@ function AuthenticatedApp({ authUser, onLogout }) {
   const tC = diffs.reduce((s,d)=>s+d.changes.filter(c=>c.type==="term_correction").length,0);
   const sC = diffs.reduce((s,d)=>s+d.changes.filter(c=>c.type==="spelling").length,0);
   const hasData = blocks.length>0&&!busy;
-
-  // ── 교정된 스크립트 (탭 공유용 useMemo) ──
-  const correctedScript = useMemo(() => {
-    if (blocks.length === 0) return "";
-    return blocks.map(b => {
-      const se = scriptEdits[b.index];
-      if (se !== undefined) return se;
-      return getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index));
-    }).join("\n");
-  }, [blocks, diffs, scriptEdits]);
-
-  const correctedBlocks = useMemo(() =>
-    blocks.map(b => ({ id: b.index, speaker: b.speaker, time: b.timestamp,
-      text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) })),
-    [blocks, diffs]);
-
-  const correctedBlocksFull = useMemo(() =>
-    blocks.map(b => ({ index: b.index, speaker: b.speaker, timestamp: b.timestamp,
-      text: getCorrectedText(b.text, diffs.filter(d => d.blockIndex === b.index)) })),
-    [blocks, diffs]);
 
   // ── 형광펜 마커 추가 핸들러 ──
   const handleMarkerAdd = useCallback((key, color, blockIdx, s, e) => {
