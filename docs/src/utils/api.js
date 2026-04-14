@@ -249,6 +249,75 @@ export async function apiSetgen(script, guestName, guestTitle, focusKeyword, con
   return d;
 }
 
+// ── 프로젝트 관리 (CMS 대시보드) ──
+
+export async function apiProjectList(config, { page = 1, filter = "all", search = "" } = {}) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const params = new URLSearchParams({ page, per_page: 20, filter, search });
+  const r = await fetch(`${base}/projects?${params}`, { headers: authHeaders() });
+  handle401(r);
+  return r.json();
+}
+
+export async function apiProjectCreate(body, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/projects/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  handle401(r);
+  const d = await r.json();
+  if (!d.success) throw new Error(d.error || "프로젝트 생성 실패");
+  return d;
+}
+
+export async function apiProjectUpdate(body, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/projects/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  handle401(r);
+  return r.json();
+}
+
+export async function apiProjectDelete(id, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/projects/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ id }),
+  });
+  handle401(r);
+  return r.json();
+}
+
+export async function apiProjectUpdateStep(id, step, stepIndex, config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/projects/update-step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ id, step, stepIndex }),
+  });
+  handle401(r);
+  return r.json();
+}
+
+export async function apiTeamMembers(config) {
+  const base = config.workerUrl;
+  if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const r = await fetch(`${base}/team/members`, { headers: authHeaders() });
+  handle401(r);
+  return r.json();
+}
+
 export function mockCorrectChunk(chunkText, analysis, cfg) {
   const chunks = [];
   const blockRe = /\[블록 (\d+)\]/g;

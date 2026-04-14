@@ -4,7 +4,7 @@ import * as mammoth from "mammoth";
 // ── Utils ──
 import { loadConfig, saveConfig } from "./utils/config.js";
 import { loadDictionary, syncDictionaryFromServer, updateDictionary } from "./utils/dictionary.js";
-import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab } from "./utils/api.js";
+import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab, apiProjectUpdateStep } from "./utils/api.js";
 import { parseDocxWithTrackChanges } from "./utils/docxParser.js";
 import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlocks, splitChunks, chunkToText, chunkCtx } from "./utils/lengthModel.js";
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
@@ -25,6 +25,10 @@ import { SetgenTab } from "./tabs/SetgenTab.jsx";
 import { VisualTab } from "./tabs/VisualTab.jsx";
 import { ModifyTab } from "./tabs/ModifyTab.jsx";
 
+// ── Views ──
+import { Dashboard } from "./views/Dashboard.jsx";
+import { NewProjectModal } from "./views/NewProjectModal.jsx";
+
 // ═══════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════
@@ -33,12 +37,15 @@ export default function App() {
   // ── 인증 상태 ──
   const [authState, setAuthState] = useState("checking"); // checking | login | authenticated
   const [authUser, setAuthUser] = useState(null);
+  const [view, setView] = useState("checking"); // checking | login | dashboard | editor
+  const [editorSessionId, setEditorSessionId] = useState(null); // 대시보드에서 선택한 세션 ID
 
   // 마운트 시 토큰 확인
   useEffect(() => {
     const token = localStorage.getItem("ttimes_token");
     if (!token) {
       setAuthState("login");
+      setView("login");
       return;
     }
     try {
@@ -50,13 +57,23 @@ export default function App() {
         localStorage.removeItem("ttimes_token");
         localStorage.removeItem("ttimes_user");
         setAuthState("login");
+        setView("login");
         return;
       }
       setAuthUser({ email: payload.sub, name: payload.name, role: payload.role });
       setAuthState("authenticated");
+      // URL에 ?s={id}가 있으면 바로 에디터, 아니면 대시보드
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("s")) {
+        setEditorSessionId(params.get("s"));
+        setView("editor");
+      } else {
+        setView("dashboard");
+      }
     } catch {
       localStorage.removeItem("ttimes_token");
       setAuthState("login");
+      setView("login");
     }
   }, []);
 
@@ -65,6 +82,7 @@ export default function App() {
     localStorage.setItem("ttimes_user", JSON.stringify(user));
     setAuthUser(user);
     setAuthState("authenticated");
+    setView("dashboard");
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -72,20 +90,65 @@ export default function App() {
     localStorage.removeItem("ttimes_user");
     setAuthUser(null);
     setAuthState("login");
+    setView("login");
+  }, []);
+
+  const handleSelectProject = useCallback((id) => {
+    setEditorSessionId(id);
+    window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
+    setView("editor");
+  }, []);
+
+  const handleBackToDashboard = useCallback(() => {
+    setEditorSessionId(null);
+    window.history.replaceState({}, "", window.location.pathname);
+    setView("dashboard");
   }, []);
 
   // 인증 게이트
-  if (authState === "checking") {
+  if (view === "checking") {
     return <div style={{height:"100vh",background:"#0F0F23",display:"flex",alignItems:"center",justifyContent:"center",color:"#9CA3AF",fontFamily:"'Pretendard Variable', sans-serif"}}>로딩 중...</div>;
   }
-  if (authState === "login") {
+  if (view === "login") {
     return <LoginScreen onLogin={handleAuthLogin} />;
   }
 
-  return <AuthenticatedApp authUser={authUser} onLogout={handleLogout} />;
+  if (view === "dashboard") {
+    return <DashboardWrapper authUser={authUser} onSelectProject={handleSelectProject} onLogout={handleLogout} />;
+  }
+
+  return <AuthenticatedApp authUser={authUser} onLogout={handleLogout} initialSessionId={editorSessionId} onBackToDashboard={handleBackToDashboard} />;
 }
 
-function AuthenticatedApp({ authUser, onLogout }) {
+function DashboardWrapper({ authUser, onSelectProject, onLogout }) {
+  const [cfg] = useState(loadConfig);
+  const [theme, setTheme] = useState(_savedTheme);
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === "dark" ? "light" : "dark";
+      applyTheme(next);
+      setMarkerColors(next === "light" ? MARKER_COLORS_LIGHT : MARKER_COLORS_DARK);
+      return next;
+    });
+  }, []);
+  const [showNewProject, setShowNewProject] = useState(false);
+
+  const handleNewProjectCreate = useCallback((id, fileContent, fileName) => {
+    setShowNewProject(false);
+    // 세션 ID로 에디터 진입 — 파일 내용은 에디터에서 URL의 ?s=로 로드
+    onSelectProject(id);
+  }, [onSelectProject]);
+
+  return <>
+    <Dashboard authUser={authUser} cfg={cfg} onSelectProject={onSelectProject}
+      onNewProject={() => setShowNewProject(true)} onLogout={onLogout}
+      toggleTheme={toggleTheme} theme={theme} />
+    {showNewProject && <NewProjectModal authUser={authUser} cfg={cfg}
+      onClose={() => setShowNewProject(false)} onCreate={handleNewProjectCreate} />}
+  </>;
+}
+
+function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashboard }) {
   const [cfg, setCfg] = useState(loadConfig);
   const [theme, setTheme] = useState(_savedTheme);
   const toggleTheme = useCallback(() => {
@@ -245,6 +308,16 @@ function AuthenticatedApp({ authUser, onLogout }) {
 
   const saveCfg = useCallback(c=>{setCfg(c);saveConfig(c);setShowSet(false)},[]);
 
+  // ── stepProgress 자동 업데이트 ──
+  const STEP_MAP = { review: 0, correction: 1, script: 2, guide: 3, visual: 4, modify: 5, highlight: 6, setgen: 7 };
+  const updateStepProgress = useCallback((tabName) => {
+    const sid = sessionIdRef.current;
+    if (!sid || cfg.apiMode === "mock") return;
+    const stepIndex = STEP_MAP[tabName];
+    if (stepIndex === undefined) return;
+    apiProjectUpdateStep(sid, tabName, stepIndex, cfg).catch(() => {});
+  }, [cfg]);
+
   // 저장 & 공유
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   const autoSaveToKV = useCallback(async (overrideData = {}) => {
@@ -259,10 +332,11 @@ function AuthenticatedApp({ authUser, onLogout }) {
       setSessionId(id);
       window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
       console.log(`💾 자동 저장 완료 (ID: ${id})`);
+      updateStepProgress(tab);
     } catch (e) {
       console.warn("자동 저장 실패:", e.message);
     }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, cfg, sessionId]);
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, cfg, sessionId, tab, updateStepProgress]);
 
   // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 /autosave 호출) ──
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -296,6 +370,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
           }
           setLastSavedSnapshot(currentSnapshot);
           setAutoSaveStatus("saved");
+          updateStepProgress(tab);
           setTimeout(() => setAutoSaveStatus(""), 3000);
         } else { setAutoSaveStatus(""); }
       } catch (e) {
@@ -832,6 +907,8 @@ function AuthenticatedApp({ authUser, onLogout }) {
     <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",height:52,
       borderBottom:`1px solid ${C.bd}`,background:C.sf,flexShrink:0}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
+        {onBackToDashboard && <button onClick={onBackToDashboard} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${C.bd}`,
+          background:"transparent",color:C.txM,fontSize:12,cursor:"pointer",fontFamily:FN}}>← 프로젝트 목록</button>}
         <span style={{fontSize:18,fontWeight:800,letterSpacing:"-0.03em"}}>
           <span style={{color:C.ac}}>티타임즈</span> 편집 CMS
         </span>

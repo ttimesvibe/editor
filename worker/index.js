@@ -122,6 +122,46 @@ if (path === "/debug-location") {
       }
     }
 
+    // ── 프로젝트 관리 ──
+    if (path === "/projects" && request.method === "GET") {
+      return await handleProjectList(url, user, env, corsHeaders);
+    }
+    if (path === "/projects/create" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        return await handleProjectCreate(body, user, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/projects/update" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        return await handleProjectUpdate(body, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/projects/delete" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        return await handleProjectDelete(body, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/projects/update-step" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        return await handleProjectUpdateStep(body, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/team/members" && request.method === "GET") {
+      return await handleTeamMembers(env, corsHeaders);
+    }
+
     try {
       const body = await request.json();
 
@@ -306,6 +346,163 @@ async function handleLoadTab(id, tab, env, headers) {
   const data = await env.SESSIONS.get(`s:${id}:${tab}`);
   if (!data) return new Response(JSON.stringify({ error: `탭 데이터 없음: ${tab}` }), { status: 404, headers });
   return new Response(data, { headers });
+}
+
+// ═══════════════════════════════════════
+// 프로젝트 관리 (CMS 대시보드)
+// ═══════════════════════════════════════
+
+const PROJECT_INDEX_KEY = "project_index";
+
+async function handleProjectList(url, user, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const all = raw ? JSON.parse(raw) : [];
+
+  const filter = url.searchParams.get("filter") || "all";
+  const search = url.searchParams.get("search") || "";
+  const page = parseInt(url.searchParams.get("page") || "1");
+  const perPage = parseInt(url.searchParams.get("per_page") || "20");
+
+  let filtered = all;
+  if (filter === "active") filtered = all.filter(p => p.status === "active");
+  else if (filter === "done") filtered = all.filter(p => p.status === "done");
+  else if (filter === "mine") filtered = all.filter(p => p.creatorEmail === user.sub || (p.editors || []).some(e => e.email === user.sub));
+
+  if (search) {
+    const q = search.toLowerCase();
+    filtered = filtered.filter(p => (p.fn || "").toLowerCase().includes(q) || (p.memo || "").toLowerCase().includes(q) || (p.creator || "").includes(q));
+  }
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (page - 1) * perPage;
+  const projects = filtered.slice(start, start + perPage);
+
+  // count by status
+  const activeCount = all.filter(p => p.status === "active").length;
+  const doneCount = all.filter(p => p.status === "done").length;
+
+  return new Response(JSON.stringify({ success: true, projects, total, page, totalPages, activeCount, doneCount }), { headers });
+}
+
+async function handleProjectCreate(body, user, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(7))).map(b => b.toString(36)).join("").slice(0, 13);
+  const now = new Date().toISOString();
+
+  let editors = body.editors || [];
+  // 생성자가 editors에 없으면 자동 추가
+  if (!editors.some(e => e.email === user.sub)) {
+    editors.unshift({ email: user.sub, name: user.name || user.sub });
+  }
+
+  const project = {
+    id,
+    fn: body.fn || "제목 없음",
+    creator: user.name || user.sub,
+    creatorEmail: user.sub,
+    editors,
+    status: "active",
+    currentStep: "review",
+    stepProgress: [false, false, false, false, false, false, false, false],
+    memo: body.memo || "",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  // project_index에 추가
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  index.unshift(project);
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+
+  // s:{id}:meta 생성
+  await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify({
+    sessionId: id, fn: project.fn, createdAt: now, updatedAt: now,
+    schemaVersion: "1.0", stages: {},
+  }), { expirationTtl: 60*60*24*365 });
+
+  return new Response(JSON.stringify({ success: true, id, project }), { headers });
+}
+
+async function handleProjectUpdate(body, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const { id } = body;
+  if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
+
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  const idx = index.findIndex(p => p.id === id);
+  if (idx < 0) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
+
+  if (body.status !== undefined) index[idx].status = body.status;
+  if (body.editors !== undefined) index[idx].editors = body.editors;
+  if (body.memo !== undefined) index[idx].memo = body.memo;
+  if (body.fn !== undefined) index[idx].fn = body.fn;
+  index[idx].updatedAt = new Date().toISOString();
+
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+  return new Response(JSON.stringify({ success: true }), { headers });
+}
+
+async function handleProjectDelete(body, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const { id } = body;
+  if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
+
+  // project_index에서 제거
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  const filtered = index.filter(p => p.id !== id);
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(filtered));
+
+  // 관련 KV key 삭제
+  const tabs = ["meta","manuscript","correction","subtitle","review","highlight","setgen","metadata","visual","modify"];
+  await Promise.all(tabs.map(t => env.SESSIONS.delete(`s:${id}:${t}`)));
+  // 레거시 key도 삭제
+  await env.SESSIONS.delete(id);
+  await env.SESSIONS.delete("save_" + id);
+  await env.SESSIONS.delete("auto_" + id);
+
+  return new Response(JSON.stringify({ success: true }), { headers });
+}
+
+async function handleProjectUpdateStep(body, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const { id, step, stepIndex } = body;
+  if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
+
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  const idx = index.findIndex(p => p.id === id);
+  if (idx < 0) return new Response(JSON.stringify({ success: true }), { headers }); // 프로젝트 없으면 무시
+
+  if (stepIndex !== undefined && index[idx].stepProgress) {
+    index[idx].stepProgress[stepIndex] = true;
+  }
+  if (step) index[idx].currentStep = step;
+  index[idx].updatedAt = new Date().toISOString();
+
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+  return new Response(JSON.stringify({ success: true }), { headers });
+}
+
+async function handleTeamMembers(env, headers) {
+  // auth Worker에서 팀원 목록을 가져옴
+  try {
+    const authUrl = "https://auth.ttimes6000.workers.dev/admin/users";
+    // JWT_SECRET이 동일하므로 내부 호출용 토큰 생성 대신, auth KV에서 직접 가져올 수 없음
+    // → auth Worker의 /admin/users는 admin 전용이므로, editor KV에 team_members를 캐시
+    const cached = await env.SESSIONS.get("team_members");
+    if (cached) {
+      return new Response(JSON.stringify({ success: true, members: JSON.parse(cached) }), { headers });
+    }
+    // 캐시 없으면 빈 배열 반환 (admin이 동기화해야 함)
+    return new Response(JSON.stringify({ success: true, members: [] }), { headers });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+  }
 }
 
 // ═══════════════════════════════════════
