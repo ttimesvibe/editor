@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { C, FN } from "../utils/styles.js";
 
 // ── Constants ──
@@ -80,6 +80,12 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
 
+  // Editor edit popup state
+  const [editingProject, setEditingProject] = useState(null); // { id, editors }
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [editorsSaving, setEditorsSaving] = useState(false);
+  const popupRef = useRef(null);
+
   // ── Sync body background with theme ──
   useEffect(() => {
     document.body.style.background = C.bg;
@@ -120,6 +126,60 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
   // Reset page when filter or search changes
   useEffect(() => { setPage(1); }, [filter, search]);
 
+  // Fetch team members for editor assignment
+  useEffect(() => {
+    if (!cfg?.workerUrl) return;
+    fetch(`${cfg.workerUrl}/team/members`, { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => { if (d?.members) setTeamMembers(d.members); })
+      .catch(() => {});
+  }, [cfg]);
+
+  // Close popup on outside click
+  useEffect(() => {
+    if (!editingProject) return;
+    const handler = (e) => {
+      if (popupRef.current && !popupRef.current.contains(e.target)) {
+        setEditingProject(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [editingProject]);
+
+  // Save editors to server
+  const saveEditors = async (projectId, newEditors) => {
+    setEditorsSaving(true);
+    try {
+      await fetch(`${cfg.workerUrl}/projects/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id: projectId, editors: newEditors }),
+      });
+      fetchProjects();
+    } catch (err) {
+      console.error("편집자 업데이트 실패:", err);
+    } finally {
+      setEditorsSaving(false);
+    }
+  };
+
+  const addEditorToProject = (member) => {
+    if (!editingProject) return;
+    const current = editingProject.editors || [];
+    if (current.some(e => (e.email || e.id) === (member.email || member.id))) return;
+    const updated = [...current, { email: member.email || member.id, name: member.name || member.email }];
+    setEditingProject({ ...editingProject, editors: updated });
+    saveEditors(editingProject.id, updated);
+  };
+
+  const removeEditorFromProject = (email) => {
+    if (!editingProject) return;
+    const updated = (editingProject.editors || []).filter(e => (e.email || e.id) !== email);
+    setEditingProject({ ...editingProject, editors: updated });
+    saveEditors(editingProject.id, updated);
+  };
+
   // ── Derived ──
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
@@ -140,32 +200,137 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
     );
   }
 
-  function renderEditors(editors) {
-    if (!editors || editors.length === 0) return <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>;
-    // editors can be [{email, name}] objects or strings
-    const names = editors.map(e => typeof e === "string" ? e : (e.name || e.email || "?"));
-    const display = names.length > 2
-      ? `${names[0]} 외 ${names.length - 1}명`
-      : names.join(", ");
+  function renderEditors(editors, projId) {
+    const names = (editors && editors.length > 0)
+      ? editors.map(e => typeof e === "string" ? e : (e.name || e.email || "?"))
+      : [];
+    const display = names.length === 0
+      ? "-"
+      : names.length > 2
+        ? `${names[0]} 외 ${names.length - 1}명`
+        : names.join(", ");
+    const isEditing = editingProject && editingProject.id === projId;
+    const currentEditors = isEditing ? (editingProject.editors || []) : (editors || []);
+    const currentNames = currentEditors.map(e => typeof e === "string" ? e : (e.name || e.email || "?"));
+    const availableMembers = teamMembers.filter(
+      m => !currentEditors.some(e => (e.email || e.id) === (m.email || m.id))
+    );
+
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ display: "flex" }}>
-          {names.slice(0, 3).map((name, i) => (
-            <div key={i} style={{
-              width: 20, height: 20, borderRadius: "50%",
-              background: avatarColor(name),
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 700, color: "#fff",
-              marginLeft: i > 0 ? -6 : 0,
-              border: `2px solid ${C.bg}`,
-              zIndex: 3 - i,
-              position: "relative",
-            }}>
-              {name.charAt(0)}
-            </div>
-          ))}
+      <div style={{ position: "relative" }}>
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isEditing) {
+              setEditingProject(null);
+            } else {
+              setEditingProject({ id: projId, editors: editors || [] });
+            }
+          }}
+          title="편집자 수정"
+        >
+          {names.length > 0 ? (
+            <>
+              <div style={{ display: "flex" }}>
+                {names.slice(0, 3).map((name, i) => (
+                  <div key={i} style={{
+                    width: 20, height: 20, borderRadius: "50%",
+                    background: avatarColor(name),
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 700, color: "#fff",
+                    marginLeft: i > 0 ? -6 : 0,
+                    border: `2px solid ${C.bg}`,
+                    zIndex: 3 - i,
+                    position: "relative",
+                  }}>
+                    {name.charAt(0)}
+                  </div>
+                ))}
+              </div>
+              <span style={{ fontSize: 12, color: C.tx, whiteSpace: "nowrap" }}>{display}</span>
+            </>
+          ) : (
+            <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>
+          )}
+          <span style={{ fontSize: 10, color: "#5E6380", marginLeft: 2 }}>✎</span>
         </div>
-        <span style={{ fontSize: 12, color: C.tx, whiteSpace: "nowrap" }}>{display}</span>
+
+        {/* Editor Edit Popup */}
+        {isEditing && (
+          <div
+            ref={popupRef}
+            style={{
+              position: "absolute", top: "100%", left: 0, marginTop: 4,
+              background: "#1A1D2E", border: "1px solid #2E3348",
+              borderRadius: 8, padding: 12, zIndex: 100, width: 240,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#9CA3AF", marginBottom: 8 }}>
+              편집자 관리
+            </div>
+
+            {/* Current editors */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+              {currentEditors.map((ed, i) => {
+                const edName = typeof ed === "string" ? ed : (ed.name || ed.email || "?");
+                const edEmail = typeof ed === "string" ? ed : (ed.email || ed.id);
+                return (
+                  <span key={edEmail || i} style={{
+                    display: "inline-flex", alignItems: "center", gap: 3,
+                    background: "rgba(74,108,247,0.15)", color: "#4A6CF7",
+                    borderRadius: 10, padding: "3px 8px", fontSize: 11,
+                  }}>
+                    {edName}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removeEditorFromProject(edEmail); }}
+                      style={{
+                        background: "none", border: "none", color: "#4A6CF7",
+                        cursor: "pointer", padding: 0, fontSize: 11,
+                        fontWeight: 700, lineHeight: 1,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                );
+              })}
+              {currentEditors.length === 0 && (
+                <span style={{ fontSize: 11, color: "#5E6380" }}>편집자 없음</span>
+              )}
+            </div>
+
+            {/* Add member dropdown */}
+            {availableMembers.length > 0 && (
+              <select
+                value=""
+                onChange={e => {
+                  const member = teamMembers.find(m => (m.email || m.id) === e.target.value);
+                  if (member) addEditorToProject(member);
+                }}
+                style={{
+                  width: "100%", padding: 6, borderRadius: 4,
+                  border: "1px solid #2E3348", background: "#0F1117",
+                  color: "#fff", fontSize: 12, cursor: "pointer",
+                  outline: "none",
+                }}
+              >
+                <option value="" disabled>+ 팀원 추가</option>
+                {availableMembers.map(m => (
+                  <option key={m.email || m.id} value={m.email || m.id}>
+                    {m.name || m.email}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {editorsSaving && (
+              <div style={{ fontSize: 10, color: "#5E6380", marginTop: 4 }}>저장 중...</div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -445,7 +610,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 </span>
 
                 {/* Editors */}
-                {renderEditors(editors)}
+                {renderEditors(editors, proj.id)}
 
                 {/* Current Step */}
                 <span style={{ fontSize: 12, color: "#8B8FA3" }}>
