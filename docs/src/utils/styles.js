@@ -33,8 +33,8 @@ export const LIGHT_THEME = {
   linkTx:"#2563EB",shadow:"rgba(0,0,0,0.1)",
 };
 
-export let _savedTheme = "dark";
-try { _savedTheme = localStorage.getItem("td_theme") || "dark"; } catch {}
+export let _savedTheme = "light";
+try { _savedTheme = localStorage.getItem("td_theme") || "light"; } catch {}
 export const C = { ...(_savedTheme === "light" ? LIGHT_THEME : DARK_THEME) };
 export function applyTheme(mode) {
   Object.assign(C, mode === "light" ? LIGHT_THEME : DARK_THEME);

@@ -80,23 +80,33 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
 
+  // ── Sync body background with theme ──
+  useEffect(() => {
+    document.body.style.background = C.bg;
+    document.documentElement.style.background = C.bg;
+  }, [theme]);
+
   // ── Data Fetching ──
 
   const fetchProjects = useCallback(async () => {
     if (!cfg?.workerUrl) return;
     setLoading(true);
     try {
-      const url = `${cfg.workerUrl}/projects?page=${page}&per_page=${PER_PAGE}&filter=${filter}&search=${encodeURIComponent(search)}`;
+      // "wip" → Worker expects "active"
+      const apiFilter = filter === "wip" ? "active" : filter;
+      const url = `${cfg.workerUrl}/projects?page=${page}&per_page=${PER_PAGE}&filter=${apiFilter}&search=${encodeURIComponent(search)}`;
       const r = await fetch(url, { headers: { ...authHeaders() } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setProjects(data.projects || []);
       setTotal(data.total || 0);
+      const wip = data.activeCount ?? 0;
+      const done = data.doneCount ?? 0;
       setCounts({
-        all:  data.countAll  ?? data.total ?? 0,
-        wip:  data.countWip  ?? 0,
-        done: data.countDone ?? 0,
-        mine: data.countMine ?? 0,
+        all:  wip + done,
+        wip,
+        done,
+        mine: data.mineCount ?? 0,
       });
     } catch (err) {
       console.error("[Dashboard] fetch error:", err);
@@ -132,20 +142,22 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
 
   function renderEditors(editors) {
     if (!editors || editors.length === 0) return <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>;
-    const display = editors.length > 2
-      ? `${editors[0]} 외 ${editors.length - 1}명`
-      : editors.join(", ");
+    // editors can be [{email, name}] objects or strings
+    const names = editors.map(e => typeof e === "string" ? e : (e.name || e.email || "?"));
+    const display = names.length > 2
+      ? `${names[0]} 외 ${names.length - 1}명`
+      : names.join(", ");
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ display: "flex" }}>
-          {editors.slice(0, 3).map((name, i) => (
+          {names.slice(0, 3).map((name, i) => (
             <div key={i} style={{
               width: 20, height: 20, borderRadius: "50%",
               background: avatarColor(name),
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, fontWeight: 700, color: "#fff",
               marginLeft: i > 0 ? -6 : 0,
-              border: "2px solid #0F1117",
+              border: `2px solid ${C.bg}`,
               zIndex: 3 - i,
               position: "relative",
             }}>
@@ -237,8 +249,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
       <header style={{
         display: "flex", alignItems: "center", height: 48,
         padding: "0 24px",
-        borderBottom: "1px solid #2E3348",
-        background: "#181B25",
+        borderBottom: `1px solid ${C.bd}`,
+        background: C.sf,
       }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: C.tx, letterSpacing: -0.3 }}>
           티타임즈 편집 CMS
@@ -428,8 +440,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                   fontSize: 13, fontWeight: 500, color: C.tx,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   paddingRight: 12,
-                }} title={proj.filename || proj.name}>
-                  {truncate(proj.filename || proj.name || "제목 없음", 40)}
+                }} title={proj.fn || proj.filename || proj.name}>
+                  {truncate(proj.fn || proj.filename || proj.name || "제목 없음", 40)}
                 </span>
 
                 {/* Editors */}

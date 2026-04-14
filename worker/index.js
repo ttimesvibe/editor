@@ -379,11 +379,12 @@ async function handleProjectList(url, user, env, headers) {
   const start = (page - 1) * perPage;
   const projects = filtered.slice(start, start + perPage);
 
-  // count by status
+  // counts (always from unfiltered `all`)
   const activeCount = all.filter(p => p.status === "active").length;
   const doneCount = all.filter(p => p.status === "done").length;
+  const mineCount = all.filter(p => p.creatorEmail === user.sub || (p.editors || []).some(e => e.email === user.sub)).length;
 
-  return new Response(JSON.stringify({ success: true, projects, total, page, totalPages, activeCount, doneCount }), { headers });
+  return new Response(JSON.stringify({ success: true, projects, total, page, totalPages, activeCount, doneCount, mineCount }), { headers });
 }
 
 async function handleProjectCreate(body, user, env, headers) {
