@@ -226,128 +226,40 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
       : names.length > 2
         ? `${names[0]} 외 ${names.length - 1}명`
         : names.join(", ");
-    const isEditing = editingProject && editingProject.id === projId;
-    const currentEditors = isEditing ? (editingProject.editors || []) : (editors || []);
-    const currentNames = currentEditors.map(e => typeof e === "string" ? e : (e.name || e.email || "?"));
-    const availableMembers = teamMembers.filter(
-      m => !currentEditors.some(e => (e.email || e.id) === (m.email || m.id))
-    );
 
     return (
-      <div style={{ position: "relative" }}>
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isEditing) {
-              setEditingProject(null);
-            } else {
-              setEditingProject({ id: projId, editors: editors || [] });
-            }
-          }}
-          title="편집자 수정"
-        >
-          {names.length > 0 ? (
-            <>
-              <div style={{ display: "flex" }}>
-                {names.slice(0, 3).map((name, i) => (
-                  <div key={i} style={{
-                    width: 20, height: 20, borderRadius: "50%",
-                    background: avatarColor(name),
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontWeight: 700, color: "#fff",
-                    marginLeft: i > 0 ? -6 : 0,
-                    border: `2px solid ${C.bg}`,
-                    zIndex: 3 - i,
-                    position: "relative",
-                  }}>
-                    {name.charAt(0)}
-                  </div>
-                ))}
-              </div>
-              <span style={{ fontSize: 12, color: C.tx, whiteSpace: "nowrap" }}>{display}</span>
-            </>
-          ) : (
-            <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>
-          )}
-          <span style={{ fontSize: 10, color: "#5E6380", marginLeft: 2 }}>✎</span>
-        </div>
-
-        {/* Editor Edit Popup */}
-        {isEditing && (
-          <div
-            ref={popupRef}
-            style={{
-              position: "absolute", bottom: "100%", left: 0, marginBottom: 4,
-              background: C.sf, border: `1px solid ${C.bd}`,
-              borderRadius: 8, padding: 12, zIndex: 100, width: 240,
-              boxShadow: `0 -4px 24px ${C.shadow}`,
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#9CA3AF", marginBottom: 8 }}>
-              편집자 관리
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditingProject({ id: projId, editors: editors || [] });
+        }}
+        title="편집자 수정"
+      >
+        {names.length > 0 ? (
+          <>
+            <div style={{ display: "flex" }}>
+              {names.slice(0, 3).map((name, i) => (
+                <div key={i} style={{
+                  width: 20, height: 20, borderRadius: "50%",
+                  background: avatarColor(name),
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 10, fontWeight: 700, color: "#fff",
+                  marginLeft: i > 0 ? -6 : 0,
+                  border: `2px solid ${C.bg}`,
+                  zIndex: 3 - i,
+                  position: "relative",
+                }}>
+                  {name.charAt(0)}
+                </div>
+              ))}
             </div>
-
-            {/* Current editors */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
-              {currentEditors.map((ed, i) => {
-                const edName = typeof ed === "string" ? ed : (ed.name || ed.email || "?");
-                const edEmail = typeof ed === "string" ? ed : (ed.email || ed.id);
-                return (
-                  <span key={edEmail || i} style={{
-                    display: "inline-flex", alignItems: "center", gap: 3,
-                    background: "rgba(74,108,247,0.15)", color: "#4A6CF7",
-                    borderRadius: 10, padding: "3px 8px", fontSize: 11,
-                  }}>
-                    {edName}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeEditorFromProject(edEmail); }}
-                      style={{
-                        background: "none", border: "none", color: "#4A6CF7",
-                        cursor: "pointer", padding: 0, fontSize: 11,
-                        fontWeight: 700, lineHeight: 1,
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                );
-              })}
-              {currentEditors.length === 0 && (
-                <span style={{ fontSize: 11, color: "#5E6380" }}>편집자 없음</span>
-              )}
-            </div>
-
-            {/* Add member dropdown */}
-            {availableMembers.length > 0 && (
-              <select
-                value=""
-                onChange={e => {
-                  const member = teamMembers.find(m => (m.email || m.id) === e.target.value);
-                  if (member) addEditorToProject(member);
-                }}
-                style={{
-                  width: "100%", padding: 6, borderRadius: 4,
-                  border: `1px solid ${C.bd}`, background: C.inputBg,
-                  color: C.tx, fontSize: 12, cursor: "pointer",
-                  outline: "none",
-                }}
-              >
-                <option value="" disabled>+ 팀원 추가</option>
-                {availableMembers.map(m => (
-                  <option key={m.email || m.id} value={m.email || m.id}>
-                    {m.name || m.email}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {editorsSaving && (
-              <div style={{ fontSize: 10, color: "#5E6380", marginTop: 4 }}>저장 중...</div>
-            )}
-          </div>
+            <span style={{ fontSize: 12, color: C.tx, whiteSpace: "nowrap" }}>{display}</span>
+          </>
+        ) : (
+          <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>
         )}
+        <span style={{ fontSize: 10, color: "#5E6380", marginLeft: 2 }}>✎</span>
       </div>
     );
   }
@@ -668,6 +580,97 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
         {renderPagination()}
 
       </div>
+
+      {/* Editor Edit Modal */}
+      {editingProject && (() => {
+        const currentEditors = editingProject.editors || [];
+        const availableMembers = teamMembers.filter(
+          m => !currentEditors.some(e => (e.email || e.id) === (m.email || m.id))
+        );
+        return (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => setEditingProject(null)}
+        >
+          <div
+            ref={popupRef}
+            style={{
+              background: C.sf, borderRadius: 12, padding: 24,
+              border: `1px solid ${C.bd}`, maxWidth: 360, width: "100%",
+              fontFamily: FN,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.tx }}>편집자 관리</div>
+              <button onClick={() => setEditingProject(null)} style={{
+                background: "none", border: "none", color: "#5E6380",
+                fontSize: 18, cursor: "pointer", padding: 4, lineHeight: 1,
+              }}>✕</button>
+            </div>
+
+            {/* Current editors */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+              {currentEditors.map((ed, i) => {
+                const edName = typeof ed === "string" ? ed : (ed.name || ed.email || "?");
+                const edEmail = typeof ed === "string" ? ed : (ed.email || ed.id);
+                return (
+                  <span key={edEmail || i} style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: "rgba(74,108,247,0.15)", color: "#4A6CF7",
+                    borderRadius: 12, padding: "4px 10px", fontSize: 12,
+                  }}>
+                    {edName}
+                    <button
+                      onClick={() => removeEditorFromProject(edEmail)}
+                      style={{
+                        background: "none", border: "none", color: "#4A6CF7",
+                        cursor: "pointer", padding: 0, fontSize: 12,
+                        fontWeight: 700, lineHeight: 1,
+                      }}
+                    >✕</button>
+                  </span>
+                );
+              })}
+              {currentEditors.length === 0 && (
+                <span style={{ fontSize: 12, color: "#5E6380" }}>편집자 없음</span>
+              )}
+            </div>
+
+            {/* Add member dropdown */}
+            {availableMembers.length > 0 && (
+              <select
+                value=""
+                onChange={e => {
+                  const member = teamMembers.find(m => (m.email || m.id) === e.target.value);
+                  if (member) addEditorToProject(member);
+                }}
+                style={{
+                  width: "100%", padding: 8, borderRadius: 6,
+                  border: `1px solid ${C.bd}`, background: C.inputBg,
+                  color: C.tx, fontSize: 13, cursor: "pointer",
+                  outline: "none", boxSizing: "border-box",
+                }}
+              >
+                <option value="" disabled>+ 팀원 추가</option>
+                {availableMembers.map(m => (
+                  <option key={m.email || m.id} value={m.email || m.id}>
+                    {m.name || m.email}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {editorsSaving && (
+              <div style={{ fontSize: 11, color: "#5E6380", marginTop: 6 }}>저장 중...</div>
+            )}
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Delete Confirmation Modal */}
       {deletingProject && (() => {
