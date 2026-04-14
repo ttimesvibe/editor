@@ -84,6 +84,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
   const [editingProject, setEditingProject] = useState(null); // { id, editors }
   const [teamMembers, setTeamMembers] = useState([]);
   const [editorsSaving, setEditorsSaving] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(null); // project object for delete confirm
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const popupRef = useRef(null);
 
   // ── Sync body background with theme ──
@@ -180,6 +182,21 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
     saveEditors(editingProject.id, updated);
   };
 
+  // Delete project
+  const deleteProject = async (id) => {
+    try {
+      await fetch(`${cfg.workerUrl}/projects/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id }),
+      });
+      setDeletingProject(null);
+      fetchProjects();
+    } catch (err) {
+      console.error("프로젝트 삭제 실패:", err);
+    }
+  };
+
   // ── Derived ──
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
@@ -261,10 +278,10 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
           <div
             ref={popupRef}
             style={{
-              position: "absolute", top: "100%", left: 0, marginTop: 4,
+              position: "absolute", bottom: "100%", left: 0, marginBottom: 4,
               background: C.sf, border: `1px solid ${C.bd}`,
               borderRadius: 8, padding: 12, zIndex: 100, width: 240,
-              boxShadow: `0 8px 24px ${C.shadow}`,
+              boxShadow: `0 -4px 24px ${C.shadow}`,
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -539,7 +556,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
           {/* Table Header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px",
+            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 32px",
             gap: 0, padding: "10px 12px",
             borderBottom: `1px solid ${C.bd}`,
             fontSize: 11, fontWeight: 600, color: "#5E6380",
@@ -552,6 +569,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
             <span>현재 단계</span>
             <span>진행</span>
             <span>수정일</span>
+            <span></span>
           </div>
 
           {/* Loading State */}
@@ -581,7 +599,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 onClick={() => onSelectProject(proj.id)}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px",
+                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 32px",
                   gap: 0, padding: "12px 12px",
                   borderBottom: `1px solid ${C.bd}`,
                   alignItems: "center",
@@ -624,6 +642,23 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 <span style={{ fontSize: 11, color: "#5E6380", textAlign: "right" }}>
                   {proj.updatedAt ? relativeDate(proj.updatedAt) : "-"}
                 </span>
+
+                {/* Delete — 생성자 또는 admin만 */}
+                {(proj.creatorEmail === authUser?.email || authUser?.role === "admin") ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
+                    title="프로젝트 삭제"
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      color: "#5E6380", fontSize: 13, padding: 2, lineHeight: 1,
+                      opacity: 0.5, transition: "opacity 0.15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
+                  >
+                    🗑
+                  </button>
+                ) : <span />}
               </div>
             );
           })}
@@ -633,6 +668,71 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
         {renderPagination()}
 
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deletingProject && (() => {
+        const projName = deletingProject.fn || deletingProject.filename || deletingProject.name || "";
+        const canDelete = deleteConfirmText === "삭제";
+        return (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: C.sf, borderRadius: 12, padding: 24,
+            border: `1px solid ${C.bd}`, maxWidth: 400, width: "100%",
+            fontFamily: FN,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#EF4444", marginBottom: 12 }}>
+              프로젝트 삭제
+            </div>
+            <div style={{ fontSize: 13, color: C.txM, marginBottom: 8, lineHeight: 1.5 }}>
+              <strong style={{ color: C.tx }}>{truncate(projName, 30)}</strong> 프로젝트의 모든 데이터가 영구 삭제됩니다.
+            </div>
+            <div style={{ fontSize: 13, color: C.txM, marginBottom: 16, lineHeight: 1.5 }}>
+              이 작업은 되돌릴 수 없습니다. 삭제하려면 아래에 <strong style={{ color: "#EF4444" }}>삭제</strong>를 입력하세요.
+            </div>
+            <input
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              placeholder="삭제"
+              autoFocus
+              style={{
+                width: "100%", padding: 10, borderRadius: 6,
+                border: `1px solid ${canDelete ? "#EF4444" : C.bd}`,
+                background: C.inputBg, color: C.tx, fontSize: 14,
+                fontFamily: FN, outline: "none", boxSizing: "border-box",
+                marginBottom: 16,
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => { setDeletingProject(null); setDeleteConfirmText(""); }}
+                style={{
+                  padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.bd}`,
+                  background: "transparent", color: C.tx, fontSize: 13,
+                  cursor: "pointer", fontFamily: FN,
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={() => { if (canDelete) { deleteProject(deletingProject.id); setDeleteConfirmText(""); } }}
+                disabled={!canDelete}
+                style={{
+                  padding: "8px 16px", borderRadius: 6, border: "none",
+                  background: canDelete ? "#EF4444" : "rgba(239,68,68,0.3)",
+                  color: "#fff", fontSize: 13, fontWeight: 600,
+                  cursor: canDelete ? "pointer" : "not-allowed", fontFamily: FN,
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 }
