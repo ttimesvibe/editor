@@ -262,9 +262,9 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
             ref={popupRef}
             style={{
               position: "absolute", top: "100%", left: 0, marginTop: 4,
-              background: "#1A1D2E", border: "1px solid #2E3348",
+              background: C.sf, border: `1px solid ${C.bd}`,
               borderRadius: 8, padding: 12, zIndex: 100, width: 240,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              boxShadow: `0 8px 24px ${C.shadow}`,
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -312,8 +312,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 }}
                 style={{
                   width: "100%", padding: 6, borderRadius: 4,
-                  border: "1px solid #2E3348", background: "#0F1117",
-                  color: "#fff", fontSize: 12, cursor: "pointer",
+                  border: `1px solid ${C.bd}`, background: C.inputBg,
+                  color: C.tx, fontSize: 12, cursor: "pointer",
                   outline: "none",
                 }}
               >
@@ -343,7 +343,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
         {STEP_KEYS.map((_, i) => (
           <div key={i} style={{
             width: 14, height: 3, borderRadius: 1,
-            background: i <= currentIdx ? stepColor : "#2E3348",
+            background: i <= currentIdx ? stepColor : C.bd,
           }} />
         ))}
       </div>
@@ -369,7 +369,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, padding: "24px 0 16px" }}>
         <button
-          style={{ ...btnBase, background: "transparent", color: page === 1 ? "#2E3348" : "#5E6380" }}
+          style={{ ...btnBase, background: "transparent", color: page === 1 ? C.bd : C.txD }}
           disabled={page === 1}
           onClick={() => setPage(p => Math.max(1, p - 1))}
         >
@@ -380,8 +380,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
             key={p}
             style={{
               ...btnBase,
-              background: p === page ? "#2E3348" : "transparent",
-              color: p === page ? "#fff" : "#5E6380",
+              background: p === page ? C.ac : "transparent",
+              color: p === page ? "#fff" : C.txD,
             }}
             onClick={() => setPage(p)}
           >
@@ -389,7 +389,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
           </button>
         ))}
         <button
-          style={{ ...btnBase, background: "transparent", color: page === totalPages ? "#2E3348" : "#5E6380" }}
+          style={{ ...btnBase, background: "transparent", color: page === totalPages ? C.bd : C.txD }}
           disabled={page === totalPages}
           onClick={() => setPage(p => Math.min(totalPages, p + 1))}
         >
@@ -453,7 +453,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
         {/* ── Page Header ── */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          paddingBottom: 20, borderBottom: "1px solid #2E3348",
+          paddingBottom: 20, borderBottom: `1px solid ${C.bd}`,
         }}>
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, lineHeight: 1.3 }}>
@@ -525,12 +525,12 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
               width: 200, padding: "6px 0", fontFamily: FN,
               fontSize: 13, color: C.tx,
               background: "transparent",
-              border: "none", borderBottom: "1px solid #2E3348",
+              border: "none", borderBottom: `1px solid ${C.bd}`,
               outline: "none",
               transition: "border-color 0.15s",
             }}
-            onFocus={e => e.target.style.borderBottomColor = "#fff"}
-            onBlur={e => e.target.style.borderBottomColor = "#2E3348"}
+            onFocus={e => e.target.style.borderBottomColor = C.ac}
+            onBlur={e => e.target.style.borderBottomColor = C.bd}
           />
         </div>
 
@@ -541,7 +541,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
             display: "grid",
             gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px",
             gap: 0, padding: "10px 12px",
-            borderBottom: "1px solid #2E3348",
+            borderBottom: `1px solid ${C.bd}`,
             fontSize: 11, fontWeight: 600, color: "#5E6380",
             textTransform: "uppercase", letterSpacing: 0.5,
           }}>
@@ -583,13 +583,13 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                   display: "grid",
                   gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px",
                   gap: 0, padding: "12px 12px",
-                  borderBottom: "1px solid #1E2230",
+                  borderBottom: `1px solid ${C.bd}`,
                   alignItems: "center",
                   cursor: "pointer",
                   opacity: isDone ? 0.35 : 1,
                   transition: "background 0.12s",
                 }}
-                onMouseEnter={e => e.currentTarget.style.background = "#181B25"}
+                onMouseEnter={e => e.currentTarget.style.background = C.glassHover}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}
               >
                 {/* Row Number */}
