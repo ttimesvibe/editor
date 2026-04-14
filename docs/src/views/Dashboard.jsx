@@ -468,7 +468,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
           {/* Table Header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 32px",
+            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 48px",
             gap: 0, padding: "10px 12px",
             borderBottom: `1px solid ${C.bd}`,
             fontSize: 11, fontWeight: 600, color: "#5E6380",
@@ -511,7 +511,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 onClick={() => onSelectProject(proj.id)}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 32px",
+                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 48px",
                   gap: 0, padding: "12px 12px",
                   borderBottom: `1px solid ${C.bd}`,
                   alignItems: "center",
@@ -561,14 +561,15 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                     onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
                     title="프로젝트 삭제"
                     style={{
-                      background: "none", border: "none", cursor: "pointer",
-                      color: "#5E6380", fontSize: 13, padding: 2, lineHeight: 1,
-                      opacity: 0.5, transition: "opacity 0.15s",
+                      background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
+                      color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
+                      transition: "background 0.15s, border-color 0.15s",
                     }}
-                    onMouseEnter={e => e.currentTarget.style.opacity = "1"}
-                    onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
                   >
-                    🗑
+                    삭제
                   </button>
                 ) : <span />}
               </div>
