@@ -33,7 +33,7 @@ export async function apiCall(endpoint, body, config, retries = 4) {
     } catch (netErr) {
       // 네트워크 에러 또는 CORS 차단
       if (i < retries - 1) {
-        const waitTime = (i + 1) * 15000;
+        const waitTime = (i + 1) * 5000;
         console.warn(`🌐 네트워크 에러 (${endpoint}): ${netErr.message}. ${waitTime/1000}초 후 재시도 (${i+1}/${retries})`);
         await delay(waitTime);
         continue;
@@ -41,14 +41,16 @@ export async function apiCall(endpoint, body, config, retries = 4) {
       throw new Error(`네트워크 연결 실패 (${endpoint}). Worker 서버 상태를 확인해주세요.\n원인: ${netErr.message}`);
     }
 
+    // 401 체크를 파싱 전에 먼저 수행
+    handle401(r);
+
     let d;
     try {
-      d = await r.json();
+      const text = await r.text();
+      d = JSON.parse(text);
     } catch (parseErr) {
-      // Worker가 HTML 에러 페이지 등 non-JSON을 반환한 경우
-      const text = await r.text().catch(() => "");
       if (i < retries - 1) {
-        const waitTime = (i + 1) * 15000;
+        const waitTime = (i + 1) * 5000;
         console.warn(`⚠️ Worker 비정상 응답 (${endpoint}): status=${r.status}. ${waitTime/1000}초 후 재시도 (${i+1}/${retries})`);
         await delay(waitTime);
         continue;
@@ -56,12 +58,10 @@ export async function apiCall(endpoint, body, config, retries = 4) {
       throw new Error(`Worker 서버 오류 (${endpoint}, HTTP ${r.status}). 입력이 너무 크거나 Worker 타임아웃일 수 있습니다.`);
     }
 
-    handle401(r);
-
     if (d.success) return d;
 
     if (r.status === 429 || d.status === 429 || (d.error && d.error.includes("Rate limited"))) {
-      const waitTime = (i + 1) * 15000;
+      const waitTime = (i + 1) * 5000;
       console.warn(`⏳ API 한도 초과! ${waitTime/1000}초 후 자동으로 재시도합니다... (${i+1}/${retries})`);
       await delay(waitTime);
       continue;
@@ -97,8 +97,9 @@ export async function apiLoadSession(id, config) {
   if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
   const r = await fetch(`${base}/load/${id}`, { headers: authHeaders() });
   handle401(r);
-  if (!r.ok) { const d = await r.json(); throw new Error(d.error || "불러오기 실패"); }
-  return r.json();
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || "불러오기 실패");
+  return d;
 }
 
 // Step 0

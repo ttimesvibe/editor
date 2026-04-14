@@ -191,6 +191,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [autoSaveStatus, setAutoSaveStatus] = useState(""); // "", "pending", "saving", "saved"
   const autoSaveTimer = useRef(null);
   const sessionIdRef = useRef(null);
+  const savingInProgress = useRef(false); // 동시 저장 방지
   const [saving, setSaving] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [hlMarkers, setHlMarkers] = useState({}); // { "blockIdx-subtitle": { color: "yellow", ranges: [{s,e}] } }
@@ -344,19 +345,24 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   const autoSaveToKV = useCallback(async (overrideData = {}) => {
     if (cfg.apiMode === "mock") return;
+    if (savingInProgress.current) return; // 동시 저장 방지
+    savingInProgress.current = true;
     try {
       const payload = {
         blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn,
-        ...overrideData, // 상태 업데이트 직후 호출 시 최신 데이터 전달용
+        ...overrideData,
       };
       if (sessionId) payload.id = sessionId;
       const id = await apiSaveSession(payload, cfg);
       setSessionId(id);
+      sessionIdRef.current = id;
       window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
       console.log(`💾 자동 저장 완료 (ID: ${id})`);
       updateStepProgress(tab);
     } catch (e) {
       console.warn("자동 저장 실패:", e.message);
+    } finally {
+      savingInProgress.current = false;
     }
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, cfg, sessionId, tab, updateStepProgress]);
 
@@ -373,6 +379,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
 
     autoSaveTimer.current = setTimeout(async () => {
+      if (savingInProgress.current) { setAutoSaveStatus(""); return; } // 다른 저장 진행중이면 스킵
+      savingInProgress.current = true;
       setAutoSaveStatus("saving");
       try {
         const session = { blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, reviewData, fn, savedAt: new Date().toISOString() };
@@ -398,6 +406,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       } catch (e) {
         console.warn("자동 저장 실패:", e.message);
         setAutoSaveStatus("");
+      } finally {
+        savingInProgress.current = false;
       }
     }, 3 * 60 * 1000); // 3분
 
