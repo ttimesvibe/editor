@@ -1507,6 +1507,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
               const isEdited = editedVal !== undefined && editedVal !== corrected;
               return <ScriptEditBlock key={idx} block={b} correctedText={corrected}
                 editedVal={editedVal} isEdited={isEdited}
+                deletions={blockDeletions[idx]}
                 onSave={val => {
                   if (val !== null) setScriptEdits(prev=>({...prev,[idx]:val}));
                   else setScriptEdits(prev=>{const n={...prev};delete n[idx];return n;});

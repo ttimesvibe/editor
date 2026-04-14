@@ -264,15 +264,24 @@ export function ReviewBlock({ block, paragraphSegments, strikeRanges, isDeleted,
 }
 
 // ── 1.5단계: 스크립트 편집 블록 (Hooks 사용을 위해 별도 컴포넌트) ──
-export function ScriptEditBlock({ block, correctedText, editedVal, isEdited, onSave, onRevert }) {
+export function ScriptEditBlock({ block, correctedText, editedVal, isEdited, onSave, onRevert, deletions }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const displayText = editedVal !== undefined ? editedVal : correctedText;
+  const rawText = editedVal !== undefined ? editedVal : correctedText;
+  const dels = deletions || [];
+  // 삭제선 범위를 실제로 제거한 텍스트
+  const displayText = (() => {
+    if (dels.length === 0) return rawText;
+    const sorted = [...dels].sort((a, b) => b.s - a.s);
+    let result = rawText;
+    for (const d of sorted) { result = result.slice(0, d.s) + result.slice(d.e); }
+    return result;
+  })();
   const idx = block.index;
 
   return <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.bd}`,
-    borderLeft:`4px solid ${isEdited?"#22C55E":"transparent"}`,
-    background:isEdited?"rgba(34,197,94,0.04)":"transparent",
+    borderLeft:`4px solid ${isEdited?"#22C55E":dels.length > 0?"#EF4444":"transparent"}`,
+    background:isEdited?"rgba(34,197,94,0.04)":dels.length > 0?"rgba(239,68,68,0.04)":"transparent",
     transition:"all 0.15s"}}>
     <div style={{marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
       <span style={{fontSize:10,fontWeight:700,color:C.txD,fontFamily:"monospace",
@@ -281,12 +290,15 @@ export function ScriptEditBlock({ block, correctedText, editedVal, isEdited, onS
       <span style={{fontSize:11,color:C.txD,fontFamily:"monospace"}}>{block.timestamp}</span>
       {isEdited && <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3,
         background:"rgba(34,197,94,0.15)",color:"#22C55E"}}>수정됨</span>}
+      {dels.length > 0 && <span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:4,
+        background:"rgba(239,68,68,0.18)",color:"#EF4444",border:"1px solid rgba(239,68,68,0.3)",
+        letterSpacing:"0.02em"}}>추가 삭제 있음</span>}
       {isEdited && <button onClick={e=>{e.stopPropagation();onRevert()}}
         style={{fontSize:10,color:C.txD,background:"none",border:"none",cursor:"pointer",marginLeft:"auto"}}
         title="원래대로 되돌리기">↩ 되돌리기</button>}
     </div>
     {!editing ? (
-      <div onClick={()=>{setDraft(displayText);setEditing(true)}}
+      <div onClick={()=>{setDraft(rawText);setEditing(true)}}
         style={{fontSize:14,lineHeight:1.8,color:C.tx,wordBreak:"keep-all",cursor:"text",
           padding:"4px 0",minHeight:28,whiteSpace:"pre-wrap",
           borderRadius:6,transition:"background 0.15s"}}
