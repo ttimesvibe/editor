@@ -117,10 +117,8 @@ export function NewProjectModal({ authUser, cfg, onClose, onCreate }) {
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
-      onClick={onClose}
     >
       <div
-        onClick={e => e.stopPropagation()}
         style={{
           background: "#1A1D2E", borderRadius: 12, padding: 28,
           width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto",

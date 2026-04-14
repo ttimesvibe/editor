@@ -292,7 +292,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
         }}>
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, lineHeight: 1.3 }}>
-              프로젝트
+              대담 편집
             </h1>
             <p style={{ fontSize: 13, color: "#8B8FA3", margin: "4px 0 0" }}>
               총 {allCount}개 · 진행중 {wipCount} · 완료 {doneCount}
