@@ -666,8 +666,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const handleGuide = useCallback(async()=>{
     setGBusy(true); setErr(null); setTab("guide");
     try {
-      // ── 청크 분할: 40,000자 기준, 오버랩 5블록 ──
-      const HIGHLIGHT_CHUNK_SIZE = 40000;
+      // ── 청크 분할: 20,000자 기준, 오버랩 5블록 ──
+      const HIGHLIGHT_CHUNK_SIZE = 20000;
       const OVERLAP_BLOCKS = 5;
 
       const hlChunks = [];
