@@ -12,12 +12,7 @@ const ALLOWED_ORIGINS = [
 
 function getAllowedOrigin(request) {
   const origin = request.headers.get("Origin");
-  return ALLOWED_ORIGINS.includes(origin) ? origin : null;
-}
-
-// KV 키 인젝션 방지: ID는 영문+숫자만 허용
-function isValidId(id) {
-  return typeof id === "string" && /^[a-zA-Z0-9]{1,32}$/.test(id);
+  return ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
 }
 
 // ── JWT 검증 ──
@@ -56,18 +51,21 @@ async function verifyAuth(request, env) {
 export default {
   async fetch(request, env) {
     const allowedOrigin = getAllowedOrigin(request);
-    const corsHeaders = { "Content-Type": "application/json" };
-    if (allowedOrigin) corsHeaders["Access-Control-Allow-Origin"] = allowedOrigin;
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": allowedOrigin,
+      "Content-Type": "application/json",
+    };
 
     // OPTIONS는 인증 불필요 (CORS preflight)
     if (request.method === "OPTIONS") {
-      const optHeaders = {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": allowedOrigin,
           "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type,Authorization",
           "Access-Control-Max-Age": "86400",
-        };
-      if (allowedOrigin) optHeaders["Access-Control-Allow-Origin"] = allowedOrigin;
-      return new Response(null, { headers: optHeaders });
+        },
+      });
     }
 
     // JWT 인증 검증
@@ -118,9 +116,9 @@ if (path === "/debug-location") {
     if (path === "/sessions/delete" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleSessionDelete(body, user, env, corsHeaders);
+        return await handleSessionDelete(body, env, corsHeaders);
       } catch (err) {
-        return new Response(JSON.stringify({ error: "세션 삭제 중 오류가 발생했습니다" }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
     }
 
@@ -139,25 +137,25 @@ if (path === "/debug-location") {
     if (path === "/projects/update" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectUpdate(body, user, env, corsHeaders);
+        return await handleProjectUpdate(body, env, corsHeaders);
       } catch (err) {
-        return new Response(JSON.stringify({ error: "프로젝트 업데이트 중 오류가 발생했습니다" }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
     }
     if (path === "/projects/delete" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectDelete(body, user, env, corsHeaders);
+        return await handleProjectDelete(body, env, corsHeaders);
       } catch (err) {
-        return new Response(JSON.stringify({ error: "프로젝트 삭제 중 오류가 발생했습니다" }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
     }
     if (path === "/projects/update-step" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectUpdateStep(body, user, env, corsHeaders);
+        return await handleProjectUpdateStep(body, env, corsHeaders);
       } catch (err) {
-        return new Response(JSON.stringify({ error: "단계 업데이트 중 오류가 발생했습니다" }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
     }
     if (path === "/team/members" && request.method === "GET") {
@@ -184,8 +182,7 @@ if (path === "/debug-location") {
       else if (path === "/setgen") return await handleSetgen(body, env, corsHeaders);
       else return new Response(JSON.stringify({ error: "Unknown endpoint" }), { status: 404, headers: corsHeaders });
     } catch (err) {
-      console.error("Editor Worker error:", err);
-      return new Response(JSON.stringify({ error: "서버 내부 오류가 발생했습니다" }), { status: 500, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
     }
   },
 };
@@ -270,11 +267,10 @@ async function handleSessionList(env, headers) {
 }
 
 // 세션 삭제 (레거시 + 탭별 key 모두 정리)
-async function handleSessionDelete(body, user, env, headers) {
+async function handleSessionDelete(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
-  if (!isValidId(id)) return new Response(JSON.stringify({ error: "잘못된 세션 ID 형식입니다" }), { status: 400, headers });
   // 레거시 key 삭제
   await env.SESSIONS.delete(id);
   await env.SESSIONS.delete("save_" + id);
@@ -362,20 +358,7 @@ const PROJECT_INDEX_KEY = "project_index";
 async function handleProjectList(url, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
-  const fullIndex = raw ? JSON.parse(raw) : [];
-
-  // 30일 지난 soft-deleted 항목 정리
-  const now = Date.now();
-  const cleaned = fullIndex.filter(p => {
-    if (!p.deleted) return true;
-    if (!p.deletedAt) return false;
-    return (now - new Date(p.deletedAt).getTime()) < SOFT_DELETE_TTL * 1000;
-  });
-  if (cleaned.length !== fullIndex.length) {
-    await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(cleaned));
-  }
-
-  const all = cleaned.filter(p => !p.deleted);
+  const all = raw ? JSON.parse(raw) : [];
 
   const filter = url.searchParams.get("filter") || "all";
   const search = url.searchParams.get("search") || "";
@@ -445,7 +428,7 @@ async function handleProjectCreate(body, user, env, headers) {
   return new Response(JSON.stringify({ success: true, id, project }), { headers });
 }
 
-async function handleProjectUpdate(body, user, env, headers) {
+async function handleProjectUpdate(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
@@ -454,15 +437,6 @@ async function handleProjectUpdate(body, user, env, headers) {
   const index = raw ? JSON.parse(raw) : [];
   const idx = index.findIndex(p => p.id === id);
   if (idx < 0) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
-
-  // 소유자 또는 담당 편집자만 수정 가능
-  const proj = index[idx];
-  const isOwner = proj.creatorEmail === user.sub;
-  const isEditor = (proj.editors || []).some(e => e.email === user.sub);
-  const isAdmin = user.role === "admin";
-  if (!isOwner && !isEditor && !isAdmin) {
-    return new Response(JSON.stringify({ error: "이 프로젝트를 수정할 권한이 없습니다" }), { status: 403, headers });
-  }
 
   if (body.status !== undefined) index[idx].status = body.status;
   if (body.editors !== undefined) index[idx].editors = body.editors;
@@ -474,54 +448,29 @@ async function handleProjectUpdate(body, user, env, headers) {
   return new Response(JSON.stringify({ success: true }), { headers });
 }
 
-const SOFT_DELETE_TTL = 30 * 24 * 60 * 60; // 30일 (초)
-
-async function handleProjectDelete(body, user, env, headers) {
+async function handleProjectDelete(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
 
+  // project_index에서 제거
   const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
   const index = raw ? JSON.parse(raw) : [];
+  const filtered = index.filter(p => p.id !== id);
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(filtered));
 
-  // 생성자 또는 admin만 삭제 가능
-  const idx = index.findIndex(p => p.id === id);
-  if (idx < 0) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
-
-  const proj = index[idx];
-  const isOwner = proj.creatorEmail === user.sub;
-  const isAdmin = user.role === "admin";
-  if (!isOwner && !isAdmin) {
-    return new Response(JSON.stringify({ error: "프로젝트를 삭제할 권한이 없습니다" }), { status: 403, headers });
-  }
-
-  // 소프트 삭제: deleted 플래그 + 삭제 시각 기록
-  index[idx].deleted = true;
-  index[idx].deletedAt = new Date().toISOString();
-  index[idx].deletedBy = user.sub;
-  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
-
-  // 탭 데이터에 30일 TTL 설정 (30일 후 자동 만료)
+  // 관련 KV key 삭제
   const tabs = ["meta","manuscript","correction","subtitle","review","highlight","setgen","metadata","visual","modify"];
-  await Promise.all(tabs.map(async (t) => {
-    const key = `s:${id}:${t}`;
-    const val = await env.SESSIONS.get(key);
-    if (val) {
-      await env.SESSIONS.put(key, val, { expirationTtl: SOFT_DELETE_TTL });
-    }
-  }));
-  // 레거시 key도 TTL 설정
-  for (const legacyKey of [id, "save_" + id, "auto_" + id]) {
-    const val = await env.SESSIONS.get(legacyKey);
-    if (val) {
-      await env.SESSIONS.put(legacyKey, val, { expirationTtl: SOFT_DELETE_TTL });
-    }
-  }
+  await Promise.all(tabs.map(t => env.SESSIONS.delete(`s:${id}:${t}`)));
+  // 레거시 key도 삭제
+  await env.SESSIONS.delete(id);
+  await env.SESSIONS.delete("save_" + id);
+  await env.SESSIONS.delete("auto_" + id);
 
   return new Response(JSON.stringify({ success: true }), { headers });
 }
 
-async function handleProjectUpdateStep(body, user, env, headers) {
+async function handleProjectUpdateStep(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id, step, stepIndex } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
@@ -554,8 +503,7 @@ async function handleTeamMembers(env, headers) {
     // 캐시 없으면 빈 배열 반환 (admin이 동기화해야 함)
     return new Response(JSON.stringify({ success: true, members: [] }), { headers });
   } catch (e) {
-    console.error("Team members error:", e);
-    return new Response(JSON.stringify({ error: "팀원 목록 조회 실패" }), { status: 500, headers });
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
   }
 }
 
@@ -1258,7 +1206,7 @@ async function handleDraft(blocks, corrected_text, analysis, env, headers, chunk
     }
   } else { userMsg += corrected_text || ""; }
 
-  const result = await callOpenAI(systemPrompt, userMsg, env, { temperature: 0.3, max_tokens: 32000 });
+  const result = await callOpenAI(systemPrompt, userMsg, env, { temperature: 0.3, max_tokens: 16000 });
   if (result.error) return new Response(JSON.stringify({ error: result.error }), { status: result.status||500, headers });
   return new Response(JSON.stringify({ success: true, result: result.content, usage: result.usage }), { headers });
 }
@@ -1274,7 +1222,7 @@ async function handleEdit(blocks, corrected_text, analysis, draftHighlights, env
   } else { userMsg += corrected_text || ""; }
   if (chunk_index !== undefined && total_chunks !== undefined) userMsg += `\n(청크 ${chunk_index+1}/${total_chunks})`;
 
-  const result = await callOpenAI(systemPrompt, userMsg, env, { temperature: 0.2, max_tokens: 32000 });
+  const result = await callOpenAI(systemPrompt, userMsg, env, { temperature: 0.2, max_tokens: 16000 });
   if (result.error) return new Response(JSON.stringify({ error: result.error }), { status: result.status||500, headers });
   return new Response(JSON.stringify({ success: true, result: result.content, usage: result.usage }), { headers });
 }
