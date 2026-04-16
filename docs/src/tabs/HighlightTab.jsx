@@ -169,7 +169,7 @@ export function HighlightTab({ script, blocks, sessionId, config, onSave, curren
         const before = html.substring(0, match.start);
         if (before.lastIndexOf("<mark") > before.lastIndexOf("</mark>")) continue;
         const snippet = html.substring(match.start, match.end);
-        html = before + `<mark style="background:rgba(0,229,255,0.18);border-bottom:2px solid #00E5FF;padding:1px 0">${snippet}</mark>` + html.substring(match.end);
+        html = before + `<mark style="background:rgba(0,229,255,0.18);border-bottom:2px solid #00E5FF;padding:1px 0;color:inherit">${snippet}</mark>` + html.substring(match.end);
       }
     }
     if (showRecs) {
