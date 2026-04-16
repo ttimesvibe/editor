@@ -209,6 +209,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [exportCache, setExportCache] = useState({}); // { highlight, setgen, visual, modify }
 
   const lRef = useRef(null), rRef = useRef(null), syncing = useRef(false), bEls = useRef({});
+  const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
+  const isInitialLoad = useRef(true); // 초기 로드 중에는 dirty 마킹 안 함
 
   // ── localStorage 자동저장 ──────────────────────────────
   useEffect(() => {
@@ -281,7 +283,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           }
           setProg({p:100,l:"✅ 세션 로드 완료"});
         } catch (e) { setErr(e.message); }
-        finally { setBusy(false); }
+        finally { setBusy(false); setTimeout(() => { isInitialLoad.current = false; }, 0); }
       })();
     } else {
       try {
@@ -298,8 +300,30 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           }
         }
       } catch {}
+      setTimeout(() => { isInitialLoad.current = false; }, 0);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── dirty 탭 추적: 데이터 변경 시 해당 탭을 dirty로 마킹 ──
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    dirtyTabs.current.add("correction");
+  }, [blocks, anal, diffs, scriptEdits, blockDeletions]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    dirtyTabs.current.add("guide");
+  }, [hl, hlStats, hlVerdicts, hlEdits, hlMarkers]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    dirtyTabs.current.add("review");
+  }, [reviewData]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    if (exportCache.highlight) dirtyTabs.current.add("highlight");
+  }, [exportCache.highlight]);
 
   // sync scroll — 1차 교정 탭에서만 연동 (편집 가이드는 독립 스크롤)
   const onScroll = useCallback(src => {
@@ -370,19 +394,28 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, [cfg]);
 
   // 저장 & 공유
-  // ── 탭별 KV 저장 헬퍼 (프로젝트 ID 기반) ──
-  const saveAllTabsToKV = useCallback(async (id) => {
+  // ── dirty 탭만 KV 저장 (변경된 탭만 개별 저장) ──
+  const saveDirtyTabsToKV = useCallback(async (id) => {
     if (!id || cfg.apiMode === "mock") return;
-    const saves = [
-      apiSaveTab(id, "correction", { blocks, anal, diffs, scriptEdits, blockDeletions }, cfg, fn),
-      apiSaveTab(id, "review", reviewData || {}, cfg, fn),
-      apiSaveTab(id, "guide", { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }, cfg, fn),
-    ];
-    // 하이라이트 탭 clips가 있으면 함께 저장
-    if (exportCache.highlight) {
+    const dirty = dirtyTabs.current;
+    if (dirty.size === 0) return;
+    const saves = [];
+    if (dirty.has("correction")) {
+      saves.push(apiSaveTab(id, "correction", { blocks, anal, diffs, scriptEdits, blockDeletions }, cfg, fn));
+    }
+    if (dirty.has("review")) {
+      saves.push(apiSaveTab(id, "review", reviewData || {}, cfg, fn));
+    }
+    if (dirty.has("guide")) {
+      saves.push(apiSaveTab(id, "guide", { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }, cfg, fn));
+    }
+    if (dirty.has("highlight") && exportCache.highlight) {
       saves.push(apiSaveTab(id, "highlight", exportCache.highlight, cfg, fn));
     }
-    await Promise.all(saves);
+    if (saves.length > 0) await Promise.all(saves);
+    const savedTabs = [...dirty];
+    dirtyTabs.current = new Set();
+    console.log(`💾 저장 완료: [${savedTabs.join(", ")}]`);
   }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, cfg, fn]);
 
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
@@ -393,17 +426,16 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     try {
       const id = sessionIdRef.current;
       if (!id) { console.warn("자동 저장 스킵: 세션 ID 없음"); return; }
-      await saveAllTabsToKV(id);
-      console.log(`💾 자동 저장 완료 (ID: ${id})`);
+      await saveDirtyTabsToKV(id);
       updateStepProgress(tab);
     } catch (e) {
       console.warn("자동 저장 실패:", e.message);
     } finally {
       savingInProgress.current = false;
     }
-  }, [cfg, saveAllTabsToKV, tab, updateStepProgress]);
+  }, [cfg, saveDirtyTabsToKV, tab, updateStepProgress]);
 
-  // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 /autosave 호출) ──
+  // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 dirty 탭만 저장) ──
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
   useEffect(() => {
@@ -417,20 +449,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
     autoSaveTimer.current = setTimeout(async () => {
       const curId = sessionIdRef.current;
-      if (!curId) { setAutoSaveStatus(""); return; } // 프로젝트 ID 없으면 스킵
+      if (!curId) { setAutoSaveStatus(""); return; }
       if (savingInProgress.current) { setAutoSaveStatus(""); return; }
+      if (dirtyTabs.current.size === 0) { setAutoSaveStatus(""); return; }
       savingInProgress.current = true;
       setAutoSaveStatus("saving");
       try {
-        const saves = [
-          apiSaveTab(curId, "correction", { blocks, anal, diffs, scriptEdits, blockDeletions }, cfg, fn),
-          apiSaveTab(curId, "review", reviewData || {}, cfg, fn),
-          apiSaveTab(curId, "guide", { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }, cfg, fn),
-        ];
-        if (exportCache.highlight) {
-          saves.push(apiSaveTab(curId, "highlight", exportCache.highlight, cfg, fn));
-        }
-        await Promise.all(saves);
+        await saveDirtyTabsToKV(curId);
         setLastSavedSnapshot(currentSnapshot);
         setAutoSaveStatus("saved");
         updateStepProgress(tab);
@@ -451,16 +476,15 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     try {
       const id = sessionIdRef.current;
       if (!id) { setErr("프로젝트 ID가 없습니다. 대시보드에서 프로젝트를 선택해주세요."); return; }
-      // 탭별 저장 (프로젝트 ID 기반)
-      await saveAllTabsToKV(id);
+      // 변경된 탭만 저장
+      await saveDirtyTabsToKV(id);
       const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
       setShareUrl(url);
-      // 공유 저장 후 자동 저장 불필요하게 트리거되지 않도록 스냅샷 갱신
       setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
       if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveAllTabsToKV]);
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveDirtyTabsToKV]);
 
   // ── 내보내기 ──
   const handleExport = useCallback(async () => {
