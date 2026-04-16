@@ -59,15 +59,10 @@ export function HighlightTab({ script, blocks, sessionId, config, onSave, curren
     prevTabRef.current = currentTab;
   }, [currentTab]);
 
-  // 클립 변경 시 자동 저장 debounce
-  const saveTimer = useRef(null);
+  // 클립 변경 시 즉시 exportCache 동기화 (업데이트 버튼에서 최신 데이터 사용)
   useEffect(() => {
     if (!onSave || clips.length === 0) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      onSave({ clips, recs, savedAt: new Date().toISOString() });
-    }, 3 * 60 * 1000);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    onSave({ clips, recs, savedAt: new Date().toISOString() });
   }, [clips, recs]);
 
   const scriptBlocks = blocks.length > 0 ? blocks : (() => {

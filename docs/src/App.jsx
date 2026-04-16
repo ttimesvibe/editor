@@ -1960,7 +1960,6 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           initialData={exportCache.highlight}
           onSave={(data) => {
             setExportCache(prev => ({ ...prev, highlight: data }));
-            if (sessionId) apiSaveTab(sessionId, "highlight", data, cfg, fn).catch(()=>{});
           }}
         />
       </div>}
