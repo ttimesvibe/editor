@@ -364,21 +364,25 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, [cfg]);
 
   // 저장 & 공유
+  // ── 탭별 KV 저장 헬퍼 (프로젝트 ID 기반) ──
+  const saveAllTabsToKV = useCallback(async (id) => {
+    if (!id || cfg.apiMode === "mock") return;
+    await Promise.all([
+      apiSaveTab(id, "correction", { blocks, anal, diffs, scriptEdits, blockDeletions }, cfg, fn),
+      apiSaveTab(id, "review", reviewData || {}, cfg, fn),
+      apiSaveTab(id, "highlight", { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }, cfg, fn),
+    ]);
+  }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, cfg, fn]);
+
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   const autoSaveToKV = useCallback(async (overrideData = {}) => {
     if (cfg.apiMode === "mock") return;
-    if (savingInProgress.current) return; // 동시 저장 방지
+    if (savingInProgress.current) return;
     savingInProgress.current = true;
     try {
-      const payload = {
-        blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn,
-        ...overrideData,
-      };
-      if (sessionId) payload.id = sessionId;
-      const id = await apiSaveSession(payload, cfg);
-      setSessionId(id);
-      sessionIdRef.current = id;
-      window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
+      const id = sessionIdRef.current;
+      if (!id) { console.warn("자동 저장 스킵: 세션 ID 없음"); return; }
+      await saveAllTabsToKV(id);
       console.log(`💾 자동 저장 완료 (ID: ${id})`);
       updateStepProgress(tab);
     } catch (e) {
@@ -386,7 +390,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     } finally {
       savingInProgress.current = false;
     }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, sessionId, tab, updateStepProgress]);
+  }, [cfg, saveAllTabsToKV, tab, updateStepProgress]);
 
   // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 /autosave 호출) ──
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -401,30 +405,21 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
 
     autoSaveTimer.current = setTimeout(async () => {
-      if (savingInProgress.current) { setAutoSaveStatus(""); return; } // 다른 저장 진행중이면 스킵
+      const curId = sessionIdRef.current;
+      if (!curId) { setAutoSaveStatus(""); return; } // 프로젝트 ID 없으면 스킵
+      if (savingInProgress.current) { setAutoSaveStatus(""); return; }
       savingInProgress.current = true;
       setAutoSaveStatus("saving");
       try {
-        const session = { blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, savedAt: new Date().toISOString() };
-        const curId = sessionIdRef.current;
-        const id = curId || (Date.now().toString(36) + Math.random().toString(36).substring(2, 8));
-        const _tk = localStorage.getItem("ttimes_token");
-        const res = await fetch(`${cfg.workerUrl}/autosave`, {
-          method: "POST", headers: { "Content-Type": "application/json", ...(_tk ? { "Authorization": `Bearer ${_tk}` } : {}) },
-          body: JSON.stringify({ id, ...session }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          if (!curId) {
-            setSessionId(data.id);
-            sessionIdRef.current = data.id;
-            window.history.replaceState({}, "", `${window.location.pathname}?s=${data.id}`);
-          }
-          setLastSavedSnapshot(currentSnapshot);
-          setAutoSaveStatus("saved");
-          updateStepProgress(tab);
-          setTimeout(() => setAutoSaveStatus(""), 3000);
-        } else { setAutoSaveStatus(""); }
+        await Promise.all([
+          apiSaveTab(curId, "correction", { blocks, anal, diffs, scriptEdits, blockDeletions }, cfg, fn),
+          apiSaveTab(curId, "review", reviewData || {}, cfg, fn),
+          apiSaveTab(curId, "highlight", { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }, cfg, fn),
+        ]);
+        setLastSavedSnapshot(currentSnapshot);
+        setAutoSaveStatus("saved");
+        updateStepProgress(tab);
+        setTimeout(() => setAutoSaveStatus(""), 3000);
       } catch (e) {
         console.warn("자동 저장 실패:", e.message);
         setAutoSaveStatus("");
@@ -439,22 +434,18 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const handleShare = useCallback(async () => {
     setSaving(true); setErr(null);
     try {
-      const payload = { blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn };
-      // sessionId가 있으면 같은 ID로 덮어쓰기 (업데이트)
-      if (sessionId) payload.id = sessionId;
-      const id = await apiSaveSession(payload, cfg);
-      setSessionId(id); // 다음 업데이트를 위해 기억
-      sessionIdRef.current = id;
+      const id = sessionIdRef.current;
+      if (!id) { setErr("프로젝트 ID가 없습니다. 대시보드에서 프로젝트를 선택해주세요."); return; }
+      // 탭별 저장 (프로젝트 ID 기반)
+      await saveAllTabsToKV(id);
       const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
       setShareUrl(url);
-      // URL에 세션 ID 반영 (브라우저 주소창)
-      window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
       // 공유 저장 후 자동 저장 불필요하게 트리거되지 않도록 스냅샷 갱신
       setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
       if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, sessionId]);
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveAllTabsToKV]);
 
   // ── 내보내기 ──
   const handleExport = useCallback(async () => {
@@ -1007,16 +998,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         </div>}
         {hasData && !readOnly && !termReview && (
           <button onClick={handleShare} disabled={saving} style={{padding:"5px 14px",borderRadius:6,border:"none",
-            background:saving?"rgba(74,108,247,0.4)":sessionId?`linear-gradient(135deg,#22C55E,#16A34A)`:`linear-gradient(135deg,${C.ac},#7C3AED)`,
+            background:saving?"rgba(74,108,247,0.4)":`linear-gradient(135deg,#22C55E,#16A34A)`,
             color:"#fff",fontSize:12,fontWeight:600,cursor:saving?"not-allowed":"pointer"}}>
-            {saving?"저장 중…":sessionId?"↑ 업데이트":"🔗 공유"}
+            {saving?"저장 중…":"↑ 업데이트"}
           </button>
-        )}
-        {/* 최초 공유가 아닌 경우 새 링크 생성 옵션 */}
-        {hasData && !readOnly && !termReview && sessionId && (
-          <button onClick={()=>{setSessionId(null);}} title="새 공유 링크 생성"
-            style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.bd}`,
-              background:"transparent",color:C.txM,fontSize:11,cursor:"pointer"}}>+ 새 링크</button>
         )}
         {hasData && (
           <button onClick={handleExport} title="HTML로 내보내기" style={{padding:"5px 10px",borderRadius:6,
