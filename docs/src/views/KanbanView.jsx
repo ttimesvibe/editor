@@ -273,6 +273,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       children={children}
                       onSelectProject={onSelectProject}
                       onNewProject={() => onNewProject?.(item.data.id)}
+                      onMoveStage={moveShootStage}
                     />
                   );
                 }
@@ -458,7 +459,7 @@ function ShootCard({ shoot, onMoveStage }) {
 // TRANSITION CARD (원고 편집 — 촬영에서 넘어온 묶음)
 // ═══════════════════════════════════════════════
 
-function TransitionCard({ shoot, children, onSelectProject, onNewProject }) {
+function TransitionCard({ shoot, children, onSelectProject, onNewProject, onMoveStage }) {
   return (
     <div style={{
       background: C.sf, border: `1px solid #7C3AED40`,
@@ -469,9 +470,18 @@ function TransitionCard({ shoot, children, onSelectProject, onNewProject }) {
         <span style={{ fontSize: 13, fontWeight: 700, color: "#A78BFA" }}>
           {shoot.guest} ({shortShootDate(shoot.shootDate)} 촬영)
         </span>
-        <span style={{ fontSize: 10, color: "#5E6380" }}>
-          {children.length > 0 ? `${children.length}편` : "편 미정"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10, color: "#5E6380" }}>
+            {children.length > 0 ? `${children.length}편` : "편 미정"}
+          </span>
+          <span
+            onClick={() => onMoveStage?.(shoot.id, "pre-production")}
+            title="촬영 예정으로 되돌리기"
+            style={{ fontSize: 10, color: "#5E6380", cursor: "pointer", padding: "2px 6px", border: `1px solid ${C.bd}`, borderRadius: 2 }}
+            onMouseEnter={e => { e.currentTarget.style.color = "#A78BFA"; e.currentTarget.style.borderColor = "#A78BFA50"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#5E6380"; e.currentTarget.style.borderColor = C.bd; }}
+          >↩ 되돌리기</span>
+        </div>
       </div>
 
       {/* Child projects */}
