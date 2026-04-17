@@ -184,6 +184,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [tab, setTab] = useState("correction");
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState({p:0,l:""});
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
   const [gReady, setGReady] = useState(false);
   const [gBusy, setGBusy] = useState(false);
   const [partialBusy, setPartialBusy] = useState(false); // 부분 생성 로딩
@@ -1091,8 +1092,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     </div>}
 
     {(busy||gBusy) && <div style={{padding:"0 20px",flexShrink:0}}><Progress pct={prog.p} label={prog.l}/></div>}
-    {(busy||gBusy) && anal?.editorial_summary && <div style={{padding:"0 20px 12px",flexShrink:0,maxWidth:660,margin:"0 auto",width:"100%"}}>
-      <EditorialSummaryPanel summary={anal.editorial_summary} collapsed={!anal.editorial_summary} onToggle={()=>{}}/>
+    {(busy||gBusy) && anal?.editorial_summary && <div style={{padding:"0 20px 12px",maxWidth:660,margin:"0 auto",width:"100%",overflowY:"auto",maxHeight:"calc(100vh - 180px)"}}>
+      <EditorialSummaryPanel summary={anal.editorial_summary} collapsed={summaryCollapsed} onToggle={()=>setSummaryCollapsed(v=>!v)}/>
     </div>}
 
     <main style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
