@@ -289,63 +289,65 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
           {ROLE_KEYS.map(roleKey => {
             const members = roles[roleKey] || [];
             const color = ROLE_COLORS[roleKey];
+            const isDropdownOpen = openDropdown === roleKey;
             return (
-              <div key={roleKey} style={{ display: "flex", alignItems: "center", border: "1px solid #2E3348", marginBottom: 10 }}>
-                <div style={{ width: 100, padding: "10px 14px", fontSize: 13, fontWeight: 700,
-                  color: "#E8E9ED", background: "#1E2230", flexShrink: 0, borderRight: "1px solid #2E3348" }}>
-                  {ROLE_LABELS[roleKey]}
+              <div key={roleKey} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", border: "1px solid #2E3348" }}>
+                  <div style={{ width: 100, padding: "10px 14px", fontSize: 13, fontWeight: 700,
+                    color: "#E8E9ED", background: "#1E2230", flexShrink: 0, borderRight: "1px solid #2E3348" }}>
+                    {ROLE_LABELS[roleKey]}
+                  </div>
+                  <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 12px", minHeight: 42, alignItems: "center" }}>
+                    {members.map(m => (
+                      <span key={m.email} style={{ display: "flex", alignItems: "center", gap: 5,
+                        fontSize: 12, fontWeight: 600, padding: "3px 10px",
+                        background: color + "15", color: color }}>
+                        <span style={{ width: 18, height: 18, borderRadius: "50%", display: "flex",
+                          alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700,
+                          background: color + "30", color }}>{m.name.charAt(0)}</span>
+                        {m.name}
+                        <span onClick={() => removeRole(roleKey, m.email)}
+                          style={{ fontSize: 9, opacity: 0.6, cursor: "pointer", marginLeft: 2 }}>✕</span>
+                      </span>
+                    ))}
+                    <span data-role-add="true"
+                      onClick={() => setOpenDropdown(isDropdownOpen ? null : roleKey)}
+                      style={{ fontSize: 11, color: "#5E6380", cursor: "pointer" }}>+ 추가</span>
+                  </div>
                 </div>
-                <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 12px", minHeight: 42, alignItems: "center" }}>
-                  {members.map(m => (
-                    <span key={m.email} style={{ display: "flex", alignItems: "center", gap: 5,
-                      fontSize: 12, fontWeight: 600, padding: "3px 10px",
-                      background: color + "15", color: color }}>
-                      <span style={{ width: 18, height: 18, borderRadius: "50%", display: "flex",
-                        alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700,
-                        background: color + "30", color }}>{m.name.charAt(0)}</span>
-                      {m.name}
-                      <span onClick={() => removeRole(roleKey, m.email)}
-                        style={{ fontSize: 9, opacity: 0.6, cursor: "pointer", marginLeft: 2 }}>✕</span>
-                    </span>
-                  ))}
-                  <span data-role-add="true"
-                    onClick={() => setOpenDropdown(openDropdown === roleKey ? null : roleKey)}
-                    style={{ fontSize: 11, color: "#5E6380", cursor: "pointer" }}>+ 추가</span>
-                </div>
+                {/* Inline dropdown — directly below this role row */}
+                {isDropdownOpen && (
+                  <div ref={dropdownRef} style={{ border: "1px solid #2E3348", borderTop: "none", background: "#0F1117", marginLeft: 100 }}>
+                    <div onClick={() => setOpenDropdown(null)}
+                      style={{ padding: "6px 14px", fontSize: 11, color: "#8B90A5", cursor: "pointer",
+                        borderBottom: "1px solid #2E3348", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#1E2230"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span>닫기</span><span>✕</span>
+                    </div>
+                    {getSortedMembers(teamMembers, roleKey).map(m => {
+                      const isSelected = (roles[roleKey] || []).some(r => r.email === (m.email || m.id));
+                      return (
+                        <div key={m.email || m.id}
+                          onClick={() => { if (!isSelected) addRole(roleKey, m); }}
+                          style={{ padding: "8px 14px", fontSize: 13, cursor: isSelected ? "default" : "pointer",
+                            display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1E2230" }}
+                          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#1E2230"; }}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <span style={{ width: 20, height: 20, borderRadius: "50%", display: "flex",
+                            alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700,
+                            background: avatarColor(m.name || m.email) + "40",
+                            color: avatarColor(m.name || m.email) }}>{(m.name || m.email).charAt(0)}</span>
+                          <span style={{ fontWeight: 500, flex: 1, color: "#E8E9ED" }}>{m.name || m.email}</span>
+                          {isSelected && <span style={{ fontSize: 11, fontWeight: 600, color: "#4ADE80" }}>선택됨</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
-          {/* Dropdown */}
-          {openDropdown && (
-            <div ref={dropdownRef} style={{ border: "1px solid #2E3348", background: "#0F1117", marginLeft: 100 }}>
-              {/* Close button */}
-              <div onClick={() => setOpenDropdown(null)}
-                style={{ padding: "6px 14px", fontSize: 11, color: "#8B90A5", cursor: "pointer",
-                  borderBottom: "1px solid #2E3348", display: "flex", alignItems: "center", justifyContent: "space-between" }}
-                onMouseEnter={e => e.currentTarget.style.background = "#1E2230"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <span>닫기</span><span>✕</span>
-              </div>
-              {getSortedMembers(teamMembers, openDropdown).map(m => {
-                const isSelected = (roles[openDropdown] || []).some(r => r.email === (m.email || m.id));
-                return (
-                  <div key={m.email || m.id}
-                    onClick={() => { if (!isSelected) addRole(openDropdown, m); }}
-                    style={{ padding: "8px 14px", fontSize: 13, cursor: isSelected ? "default" : "pointer",
-                      display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1E2230" }}
-                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#1E2230"; }}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <span style={{ width: 20, height: 20, borderRadius: "50%", display: "flex",
-                      alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700,
-                      background: avatarColor(m.name || m.email) + "40",
-                      color: avatarColor(m.name || m.email) }}>{(m.name || m.email).charAt(0)}</span>
-                    <span style={{ fontWeight: 500, flex: 1, color: "#E8E9ED" }}>{m.name || m.email}</span>
-                    {isSelected && <span style={{ fontSize: 11, fontWeight: 600, color: "#4ADE80" }}>선택됨</span>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
 
         {/* 편 수 */}
