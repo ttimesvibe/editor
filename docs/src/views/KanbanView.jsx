@@ -177,6 +177,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
   const handleDrop = (e, colKey) => {
     e.preventDefault();
     setDragOverCol(null);
+    setDraggingId(null);
     const raw = e.dataTransfer.getData("text/plain");
     if (!raw) return;
     const [type, id] = raw.split(":");
