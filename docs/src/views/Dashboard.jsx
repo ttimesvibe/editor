@@ -86,7 +86,9 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewS
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [kanbanMineOnly, setKanbanMineOnly] = useState(false);
+  const [kanbanMineOnly, setKanbanMineOnly] = useState(() => {
+    try { return localStorage.getItem("kanban_mine_only") === "true"; } catch { return false; }
+  });
 
   // Editor edit popup state
   const [editingProject, setEditingProject] = useState(null); // { id, editors }
@@ -442,7 +444,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewS
             {viewMode === "kanban" && (
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
                 <span
-                  onClick={() => setKanbanMineOnly(v => !v)}
+                  onClick={() => setKanbanMineOnly(v => { const next = !v; try { localStorage.setItem("kanban_mine_only", String(next)); } catch {} return next; })}
                   style={{
                     width: 34, height: 18, borderRadius: 9, position: "relative",
                     background: kanbanMineOnly ? "#4A6CF7" : C.bd,
