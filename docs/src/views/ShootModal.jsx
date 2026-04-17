@@ -16,8 +16,9 @@ function avatarColor(name) {
 // ── Role-specific priority ordering ──
 const ROLE_PRIORITY = {
   filming: ["장민주", "강기훈"],
+  progress: ["홍재의", "배소진", "이재원", "이사민"],
   scriptEdit: ["박성수", "배소진", "홍재의", "이재원", "이사민"],
-  videoEdit: ["박의정", "박선희", "장민주", "강채은", "강기훈", "박수형", "허재석", "이소민"],
+  videoEdit: ["박의정", "박선희", "장민주", "강채은", "강기훈", "박수형", "이소민", "허재석"],
 };
 
 function getSortedMembers(members, roleKey) {
@@ -62,6 +63,10 @@ function parseShootDateTime(shoot) {
   };
 }
 
+// ── Episode options ──
+const EPISODE_OPTIONS = [1, 2, 3, 4, null]; // null = 미정
+const EPISODE_LABELS = { 1: "1편", 2: "2편", 3: "3편", 4: "4편", null: "미정" };
+
 export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot }) {
   const isEdit = !!editShoot;
   const initTime = parseShootDateTime(editShoot);
@@ -73,8 +78,24 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
   const [ampm, setAmpm] = useState(initTime.ampm);
   const [hour, setHour] = useState(initTime.hour);
   const [minute, setMinute] = useState(initTime.minute);
-  const [tags, setTags] = useState(editShoot?.tags || { studioBooked: false, hasDemo: false });
-  const [roles, setRoles] = useState(editShoot?.roles || { filming: [], scriptEdit: [], videoEdit: [] });
+  const [tags, setTags] = useState(() => {
+    if (editShoot?.tags) {
+      // migrate legacy studioBooked → studioA
+      const t = { ...editShoot.tags };
+      if (t.studioBooked && !t.studioA && !t.studioB) {
+        t.studioA = true;
+        delete t.studioBooked;
+      }
+      return t;
+    }
+    return { studioA: false, studioB: false, hasDemo: false };
+  });
+  const [roles, setRoles] = useState(() => {
+    const r = editShoot?.roles || { filming: [], progress: [], scriptEdit: [], videoEdit: [] };
+    if (!r.progress) r.progress = [];
+    return r;
+  });
+  const [totalEpisodes, setTotalEpisodes] = useState(editShoot?.totalEpisodes ?? null);
   const [memo, setMemo] = useState(editShoot?.memo || "");
   const [teamMembers, setTeamMembers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -96,7 +117,6 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
     if (!openDropdown) return;
     const handler = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        // Check if clicked on a "+ 추가" button (don't close if toggling)
         if (e.target.closest("[data-role-add]")) return;
         setOpenDropdown(null);
       }
@@ -122,7 +142,6 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
   // ── Hours: 오전 8~11, 오후 12~9 ──
   const hourOptions = ampm === "오전" ? [8, 9, 10, 11] : [12, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-  // If current hour is not in the new options after AM/PM switch, reset to first valid
   useEffect(() => {
     const h = parseInt(hour);
     if (!hourOptions.includes(h)) {
@@ -144,8 +163,8 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
 
       const endpoint = isEdit ? "/shoots/update" : "/shoots/create";
       const payload = isEdit
-        ? { id: editShoot.id, guest, topic, shootDate: shootDateTime, tags, roles, memo }
-        : { guest, topic, shootDate: shootDateTime, tags, roles, memo };
+        ? { id: editShoot.id, guest, topic, shootDate: shootDateTime, tags, roles, memo, totalEpisodes }
+        : { guest, topic, shootDate: shootDateTime, tags, roles, memo, totalEpisodes };
 
       await fetch(`${cfg.workerUrl}${endpoint}`, {
         method: "POST",
@@ -166,8 +185,9 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
     color: "#E8E9ED", fontSize: 14, fontFamily: FN, outline: "none", boxSizing: "border-box",
   };
 
-  const ROLE_LABELS = { filming: "촬영", scriptEdit: "원고 편집", videoEdit: "영상 편집" };
-  const ROLE_COLORS = { filming: "#F59E0B", scriptEdit: "#4A6CF7", videoEdit: "#22C55E" };
+  const ROLE_KEYS = ["filming", "progress", "scriptEdit", "videoEdit"];
+  const ROLE_LABELS = { filming: "촬영", progress: "진행", scriptEdit: "원고 편집", videoEdit: "영상 편집" };
+  const ROLE_COLORS = { filming: "#F59E0B", progress: "#EC4899", scriptEdit: "#4A6CF7", videoEdit: "#22C55E" };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200,
@@ -200,6 +220,31 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
           <label style={labelStyle}>주제 / 메모</label>
           <input value={topic} onChange={e => setTopic(e.target.value)}
             placeholder="인터뷰 주제, 특이사항 등" style={inputStyle} />
+        </div>
+
+        {/* 편 수 */}
+        <div style={{ marginBottom: 18 }}>
+          <div style={labelStyle}>편 수</div>
+          <div style={{ display: "flex", gap: 0 }}>
+            {EPISODE_OPTIONS.map((ep) => {
+              const isActive = totalEpisodes === ep;
+              return (
+                <span key={String(ep)} onClick={() => setTotalEpisodes(ep)}
+                  style={{
+                    flex: 1, textAlign: "center", padding: "8px 0", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer",
+                    border: `1px solid ${isActive ? "#4A6CF750" : "#2E3348"}`,
+                    borderRight: "none",
+                    background: isActive ? "#4A6CF720" : "#0F1117",
+                    color: isActive ? "#7C9DFF" : "#5E6380",
+                  }}>
+                  {EPISODE_LABELS[String(ep)]}
+                </span>
+              );
+            })}
+            {/* close the last border */}
+            <span style={{ width: 0, borderRight: "1px solid #2E3348" }} />
+          </div>
         </div>
 
         {/* 날짜 + 시간 */}
@@ -239,12 +284,18 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
         <div style={{ marginBottom: 18 }}>
           <div style={labelStyle}>상태 태그</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            <span onClick={() => toggleTag("studioBooked")} style={{
+            <span onClick={() => toggleTag("studioA")} style={{
               fontSize: 12, fontWeight: 600, padding: "6px 14px", cursor: "pointer",
-              border: `1px solid ${tags.studioBooked ? "#7C3AED50" : "#2E3348"}`,
-              background: tags.studioBooked ? "#7C3AED25" : "#0F1117",
-              color: tags.studioBooked ? "#A78BFA" : "#5E6380",
-            }}>스튜디오 예약 완료</span>
+              border: `1px solid ${tags.studioA ? "#7C3AED50" : "#2E3348"}`,
+              background: tags.studioA ? "#7C3AED25" : "#0F1117",
+              color: tags.studioA ? "#A78BFA" : "#5E6380",
+            }}>A스튜디오 예약</span>
+            <span onClick={() => toggleTag("studioB")} style={{
+              fontSize: 12, fontWeight: 600, padding: "6px 14px", cursor: "pointer",
+              border: `1px solid ${tags.studioB ? "#7C3AED50" : "#2E3348"}`,
+              background: tags.studioB ? "#7C3AED25" : "#0F1117",
+              color: tags.studioB ? "#A78BFA" : "#5E6380",
+            }}>B스튜디오 예약</span>
             <span onClick={() => toggleTag("hasDemo")} style={{
               fontSize: 12, fontWeight: 600, padding: "6px 14px", cursor: "pointer",
               border: `1px solid ${tags.hasDemo ? "#F59E0B50" : "#2E3348"}`,
@@ -260,7 +311,7 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
         {/* 역할 배정 */}
         <div style={{ marginBottom: 18 }}>
           <div style={labelStyle}>역할 배정 (CMS 등록자 중 선택)</div>
-          {["filming", "scriptEdit", "videoEdit"].map(roleKey => {
+          {ROLE_KEYS.map(roleKey => {
             const members = roles[roleKey] || [];
             const color = ROLE_COLORS[roleKey];
             return (

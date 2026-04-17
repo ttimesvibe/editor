@@ -26,8 +26,8 @@ const COLUMNS = [
   { key: "done",           label: "표출 완료", color: "#5E6380" },
 ];
 
-const ROLE_LABELS = { filming: "촬영", scriptEdit: "원고", videoEdit: "영상" };
-const ROLE_COLORS = { filming: "#F59E0B", scriptEdit: "#4A6CF7", videoEdit: "#22C55E" };
+const ROLE_LABELS = { filming: "촬영", progress: "진행", scriptEdit: "원고", videoEdit: "영상" };
+const ROLE_COLORS = { filming: "#F59E0B", progress: "#EC4899", scriptEdit: "#4A6CF7", videoEdit: "#22C55E" };
 
 // ── Stage transition labels ──
 const STAGE_NEXT = {
@@ -199,6 +199,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
     if (!mineOnly) return true;
     const allMembers = [
       ...(s.roles?.filming || []),
+      ...(s.roles?.progress || []),
       ...(s.roles?.scriptEdit || []),
       ...(s.roles?.videoEdit || []),
     ];
@@ -352,6 +353,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       />
                     );
                   }
+                  const shootChildCount = projects.filter(p => p.parentShootId === item.data.id).length;
                   return (
                     <ShootCard
                       key={item.data.id}
@@ -362,6 +364,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       onDragStart={(e) => handleDragStart(e, "shoot", item.data.id)}
                       onDragEnd={handleDragEnd}
                       isDragging={draggingId === item.data.id}
+                      childCount={shootChildCount}
                     />
                   );
                 }
@@ -453,13 +456,36 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
 // SHOOT CARD (촬영 예정 등)
 // ═══════════════════════════════════════════════
 
-function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd, isDragging }) {
+function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd, isDragging, childCount }) {
   const allRoles = [
     ...(shoot.roles?.filming || []),
+    ...(shoot.roles?.progress || []),
     ...(shoot.roles?.scriptEdit || []),
     ...(shoot.roles?.videoEdit || []),
   ];
   const stageAction = STAGE_NEXT[stage];
+
+  // Episode badge logic
+  const te = shoot.totalEpisodes;
+  const linked = childCount || 0;
+  let episodeBadge = null;
+  if (te) {
+    if (linked >= te) {
+      episodeBadge = { text: `${te}편 모두 연결`, color: "#22C55E" };
+    } else if (linked > 0) {
+      episodeBadge = { text: `${te}편 중 ${linked}편 연결`, color: "#F59E0B" };
+    } else {
+      episodeBadge = { text: `${te}편`, color: "#4A6CF7" };
+    }
+  } else {
+    episodeBadge = { text: "편 미정", color: "#5E6380" };
+  }
+
+  // Tags — support both legacy studioBooked and new studioA/B
+  const hasStudioA = shoot.tags?.studioA || shoot.tags?.studioBooked;
+  const hasStudioB = shoot.tags?.studioB;
+  const hasDemo = shoot.tags?.hasDemo;
+  const hasTags = hasStudioA || hasStudioB || hasDemo;
 
   return (
     <div
@@ -475,19 +501,24 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
       onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = "#454B66"; }}
       onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
     >
-      {/* Tags */}
-      {(shoot.tags?.studioBooked || shoot.tags?.hasDemo) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-          {shoot.tags?.studioBooked && (
-            <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
-              background: "#7C3AED20", color: "#A78BFA" }}>스튜디오 예약 완료</span>
-          )}
-          {shoot.tags?.hasDemo && (
-            <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
-              background: "#F59E0B20", color: "#FBBF24" }}>시연있음</span>
-          )}
-        </div>
-      )}
+      {/* Tags + Episode badge row */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+        {/* Episode badge */}
+        <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
+          background: episodeBadge.color + "20", color: episodeBadge.color }}>{episodeBadge.text}</span>
+        {hasStudioA && (
+          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
+            background: "#7C3AED20", color: "#A78BFA" }}>A스튜디오</span>
+        )}
+        {hasStudioB && (
+          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
+            background: "#7C3AED20", color: "#A78BFA" }}>B스튜디오</span>
+        )}
+        {hasDemo && (
+          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 2,
+            background: "#F59E0B20", color: "#FBBF24" }}>시연있음</span>
+        )}
+      </div>
 
       {/* Guest */}
       <div style={{ fontSize: 15, fontWeight: 700, color: C.tx, marginBottom: 2 }}>{shoot.guest}</div>
@@ -523,7 +554,7 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
           paddingTop: 8, borderTop: `1px solid ${C.bd}`,
           fontSize: 10, color: "#8B90A5",
         }}>
-          {["filming","scriptEdit","videoEdit"].map((roleKey, ri) => {
+          {["filming","progress","scriptEdit","videoEdit"].map((roleKey, ri) => {
             const members = shoot.roles?.[roleKey] || [];
             if (members.length === 0) return null;
             return (

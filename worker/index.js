@@ -4,6 +4,8 @@
 // /correct: v4 통합 교정 (필러+용어+맞춤법+구어체 단일 호출 + 코드 검증)
 // /highlights: v2 룰북 기반 2-Pass (Draft Agent → Editor Agent) + 청크 분할 지원
 
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxUH1FPI7OxF4_N1N8F6ExCNkyBTAZY3jmPjDch1W4Lqv96WbbxBzSky-Bkk5qF9MBW/exec";
+
 const ALLOWED_ORIGINS = [
   "https://ttimesvibe.github.io",
   "http://localhost:5173",
@@ -513,6 +515,12 @@ async function handleProjectUpdate(body, env, headers) {
   index[idx].updatedAt = new Date().toISOString();
 
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+
+  // stage가 done으로 변경될 때 부모 shoot 자동 완료 체크
+  if (body.stage === "done" && index[idx].parentShootId) {
+    await checkAndAutoCompleteShoot(index[idx].parentShootId, env);
+  }
+
   return new Response(JSON.stringify({ success: true }), { headers });
 }
 
@@ -633,7 +641,8 @@ async function handleShootCreate(body, user, env, headers) {
     shootDate: body.shootDate || null,
     stage: "pre-production",
     tags: body.tags || {},
-    roles: body.roles || { filming: [], scriptEdit: [], videoEdit: [] },
+    roles: body.roles || { filming: [], progress: [], scriptEdit: [], videoEdit: [] },
+    totalEpisodes: body.totalEpisodes ?? null,
     childProjectIds: [],
     memo: body.memo || "",
     creatorEmail: user.sub,
@@ -646,6 +655,36 @@ async function handleShootCreate(body, user, env, headers) {
   const index = raw ? JSON.parse(raw) : [];
   index.unshift(shoot);
   await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(index));
+
+  // Google Calendar 이벤트 생성 (비동기, 실패해도 촬영 등록은 유지)
+  if (shoot.shootDate) {
+    try {
+      const startTime = new Date(shoot.shootDate);
+      const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+      const attendees = [
+        ...(shoot.roles?.filming || []),
+        ...(shoot.roles?.progress || []),
+        ...(shoot.roles?.scriptEdit || []),
+        ...(shoot.roles?.videoEdit || []),
+      ].map(m => m.email).filter(Boolean);
+      const episodeText = shoot.totalEpisodes ? ` (${shoot.totalEpisodes}편)` : "";
+
+      await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "createEvent",
+          title: `[촬영] ${shoot.guest}${episodeText}`,
+          description: `주제: ${shoot.topic || "미정"}\n메모: ${shoot.memo || ""}\n등록자: ${shoot.creator}`,
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          attendees,
+        }),
+      });
+    } catch (calErr) {
+      console.error("Calendar event creation failed:", calErr);
+    }
+  }
 
   return new Response(JSON.stringify({ success: true, id, shoot }), { headers });
 }
@@ -667,6 +706,7 @@ async function handleShootUpdate(body, env, headers) {
   if (body.stage !== undefined && VALID_STAGES.includes(body.stage)) index[idx].stage = body.stage;
   if (body.tags !== undefined) index[idx].tags = body.tags;
   if (body.roles !== undefined) index[idx].roles = body.roles;
+  if (body.totalEpisodes !== undefined) index[idx].totalEpisodes = body.totalEpisodes;
   index[idx].updatedAt = new Date().toISOString();
 
   await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(index));
@@ -726,11 +766,17 @@ async function checkAndAutoCompleteShoot(shootId, env) {
   const projects = projRaw ? JSON.parse(projRaw) : [];
   const children = projects.filter(p => p.parentShootId === shootId);
 
-  if (children.length > 0 && children.every(p => p.status === "done")) {
-    shoot.stage = "done";
-    shoot.updatedAt = new Date().toISOString();
-    await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(shoots));
-  }
+  if (children.length === 0) return;
+  const allDone = children.every(p => p.status === "done" || p.currentStep === "done");
+  if (!allDone) return;
+
+  // totalEpisodes가 설정돼 있으면 자식 수가 일치해야 자동 완료
+  const te = shoot.totalEpisodes;
+  if (te && children.length < te) return;
+
+  shoot.stage = "done";
+  shoot.updatedAt = new Date().toISOString();
+  await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(shoots));
 }
 
 // ═══════════════════════════════════════
