@@ -62,6 +62,12 @@ function relativeDate(iso) {
   return `${mo}개월`;
 }
 
+function shortDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+
 function truncate(str, max) {
   if (!str) return "";
   return str.length > max ? str.slice(0, max) + "…" : str;
@@ -75,7 +81,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
   const [projects, setProjects] = useState([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ all: 0, wip: 0, done: 0, mine: 0 });
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("wip");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -194,6 +200,21 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
       fetchProjects();
     } catch (err) {
       console.error("프로젝트 삭제 실패:", err);
+    }
+  };
+
+  // Mark project as done/undone
+  const toggleDone = async (projId, currentStep) => {
+    const newStep = currentStep === "done" ? "review" : "done";
+    try {
+      await fetch(`${cfg.workerUrl}/projects/update-step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id: projId, step: newStep }),
+      });
+      fetchProjects();
+    } catch (err) {
+      console.error("완료 처리 실패:", err);
     }
   };
 
@@ -468,7 +489,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
           {/* Table Header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 48px",
+            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
             gap: 0, padding: "10px 12px",
             borderBottom: `1px solid ${C.bd}`,
             fontSize: 11, fontWeight: 600, color: "#5E6380",
@@ -480,7 +501,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
             <span>편집자</span>
             <span>현재 단계</span>
             <span>진행</span>
-            <span>수정일</span>
+            <span>날짜</span>
             <span></span>
           </div>
 
@@ -511,7 +532,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 onClick={() => onSelectProject(proj.id)}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 60px 48px",
+                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
                   gap: 0, padding: "12px 12px",
                   borderBottom: `1px solid ${C.bd}`,
                   alignItems: "center",
@@ -550,28 +571,45 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onLogo
                 {/* Progress Bar */}
                 {renderProgress(step)}
 
-                {/* Modified Date */}
-                <span style={{ fontSize: 11, color: "#5E6380", textAlign: "right" }}>
-                  {proj.updatedAt ? relativeDate(proj.updatedAt) : "-"}
-                </span>
+                {/* Date: 등록일 + 최종수정 */}
+                <div style={{ textAlign: "right", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: 11, color: "#5E6380" }}>{shortDate(proj.createdAt)}</div>
+                  <div style={{ fontSize: 10, color: "#3A3F52" }}>{proj.updatedAt ? relativeDate(proj.updatedAt) : "-"}</div>
+                </div>
 
-                {/* Delete — 생성자 또는 admin만 */}
-                {(proj.creatorEmail === authUser?.email || authUser?.role === "admin") ? (
+                {/* Actions: 완료 + 삭제 */}
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
                   <button
-                    onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
-                    title="프로젝트 삭제"
+                    onClick={(e) => { e.stopPropagation(); toggleDone(proj.id, step); }}
+                    title={isDone ? "진행중으로 되돌리기" : "완료 처리"}
                     style={{
-                      background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
-                      color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+                      background: "none", border: `1px solid ${isDone ? "rgba(139,143,163,0.3)" : "rgba(34,197,94,0.3)"}`, cursor: "pointer",
+                      color: isDone ? "#8B8FA3" : "#22C55E", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
                       borderRadius: 4, fontFamily: FN, fontWeight: 500,
                       transition: "background 0.15s, border-color 0.15s",
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
+                    onMouseEnter={e => { e.currentTarget.style.background = isDone ? "rgba(139,143,163,0.15)" : "rgba(34,197,94,0.15)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
                   >
-                    삭제
+                    {isDone ? "복원" : "완료"}
                   </button>
-                ) : <span />}
+                  {(proj.creatorEmail === authUser?.email || authUser?.role === "admin") && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
+                      title="프로젝트 삭제"
+                      style={{
+                        background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
+                        color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+                        borderRadius: 4, fontFamily: FN, fontWeight: 500,
+                        transition: "background 0.15s, border-color 0.15s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
+                    >
+                      삭제
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}

@@ -484,7 +484,11 @@ async function handleProjectUpdateStep(body, env, headers) {
   if (stepIndex !== undefined && index[idx].stepProgress) {
     index[idx].stepProgress[stepIndex] = true;
   }
-  if (step) index[idx].currentStep = step;
+  if (step) {
+    index[idx].currentStep = step;
+    if (step === "done") index[idx].status = "done";
+    else if (index[idx].status === "done") index[idx].status = "active";
+  }
   index[idx].updatedAt = new Date().toISOString();
 
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
