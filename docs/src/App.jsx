@@ -136,10 +136,12 @@ function DashboardWrapper({ authUser, onSelectProject, onLogout }) {
   const [showShootModal, setShowShootModal] = useState(false);
   const [viewMode, setViewMode] = useState("board"); // "board" | "kanban"
   const [parentShootIdForNewProject, setParentShootIdForNewProject] = useState(null);
+  const [kanbanRefreshKey, setKanbanRefreshKey] = useState(0);
 
   const handleNewProjectCreate = useCallback(async (id, fileContent, fileName) => {
     setShowNewProject(false);
     setParentShootIdForNewProject(null);
+    setKanbanRefreshKey(k => k + 1);
     // 원고 텍스트를 manuscript 탭에 저장
     if (fileContent) {
       try {
@@ -153,7 +155,7 @@ function DashboardWrapper({ authUser, onSelectProject, onLogout }) {
 
   const handleShootCreated = useCallback(() => {
     setShowShootModal(false);
-    // KanbanView will re-fetch on its own via useEffect
+    setKanbanRefreshKey(k => k + 1);
   }, []);
 
   const handleNewProjectWithShoot = useCallback((parentShootId) => {
@@ -168,7 +170,7 @@ function DashboardWrapper({ authUser, onSelectProject, onLogout }) {
       onNewProjectWithShoot={handleNewProjectWithShoot}
       onLogout={onLogout}
       toggleTheme={toggleTheme} theme={theme}
-      viewMode={viewMode} setViewMode={setViewMode} />
+      viewMode={viewMode} setViewMode={setViewMode} kanbanRefreshKey={kanbanRefreshKey} />
     {showNewProject && <NewProjectModal authUser={authUser} cfg={cfg}
       parentShootId={parentShootIdForNewProject}
       onClose={() => { setShowNewProject(false); setParentShootIdForNewProject(null); }}

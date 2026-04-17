@@ -78,7 +78,7 @@ function truncate(str, max) {
 // DASHBOARD
 // ═══════════════════════════════════════════════
 
-export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewShoot, onNewProjectWithShoot, onLogout, toggleTheme, theme, viewMode, setViewMode }) {
+export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewShoot, onNewProjectWithShoot, onLogout, toggleTheme, theme, viewMode, setViewMode, kanbanRefreshKey }) {
   const [projects, setProjects] = useState([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ all: 0, wip: 0, done: 0, mine: 0 });
@@ -402,7 +402,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewS
       </header>
 
       {/* ── Content Area ── */}
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "32px 24px" }}>
+      <div style={{ maxWidth: viewMode === "kanban" ? "none" : 960, margin: "0 auto", padding: "32px 24px" }}>
 
         {/* ── Page Header ── */}
         <div style={{
@@ -437,7 +437,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewS
                   background: viewMode === "kanban" ? "#E8E9ED" : "transparent",
                   color: viewMode === "kanban" ? "#0F1117" : "#5E6380",
                 }}
-              >칸반</button>
+              >일정</button>
             </div>
 
             {/* Mine-only toggle (kanban only) */}
@@ -492,6 +492,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onNewS
               onNewShoot={onNewShoot}
               onNewProject={(parentShootId) => onNewProjectWithShoot?.(parentShootId)}
               mineOnly={kanbanMineOnly}
+              refreshKey={kanbanRefreshKey}
             />
           </div>
         )}

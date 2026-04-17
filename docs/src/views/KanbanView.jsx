@@ -77,7 +77,7 @@ function getMonthKey(iso) {
 // KANBAN VIEW
 // ═══════════════════════════════════════════════
 
-export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewProject, mineOnly }) {
+export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewProject, mineOnly, refreshKey }) {
   const [shoots, setShoots] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -102,7 +102,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
     } finally {
       setLoading(false);
     }
-  }, [cfg]);
+  }, [cfg, refreshKey]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -221,10 +221,10 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
   }
 
   return (
-    <div style={{ display: "flex", gap: 0, overflowX: "auto", minHeight: "calc(100vh - 180px)" }}>
+    <div style={{ display: "flex", gap: 0, overflowX: "auto", height: "calc(100vh - 180px)" }}>
       {COLUMNS.map(col => (
         <div key={col.key} style={{
-          minWidth: 300, maxWidth: 300, flexShrink: 0,
+          flex: 1, minWidth: 240,
           borderRight: `1px solid ${C.bd}`,
           display: "flex", flexDirection: "column",
         }}>
