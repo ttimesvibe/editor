@@ -149,6 +149,24 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
     }
   }, [ampm]);
 
+  const handleDelete = async () => {
+    if (!isEdit || submitting) return;
+    if (!confirm(`"${editShoot.guest}" 촬영 일정을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`)) return;
+    setSubmitting(true);
+    try {
+      await fetch(`${cfg.workerUrl}/shoots/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id: editShoot.id }),
+      });
+      onCreate();
+    } catch (err) {
+      console.error("촬영 일정 삭제 실패:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!guest || submitting) return;
     setSubmitting(true);
@@ -375,7 +393,16 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
         </div>
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24, paddingTop: 20, borderTop: "1px solid #2E3348" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 24, paddingTop: 20, borderTop: "1px solid #2E3348" }}>
+          {isEdit && (
+            <button onClick={handleDelete} disabled={submitting}
+              style={{ background: "none", border: "1px solid #7F1D1D",
+                padding: "10px 18px", fontSize: 13, cursor: submitting ? "not-allowed" : "pointer",
+                color: "#F87171", fontFamily: FN, fontWeight: 600 }}>
+              삭제
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ background: "none", border: "1px solid #2E3348",
             padding: "10px 22px", fontSize: 13, cursor: "pointer", color: "#8B90A5", fontFamily: FN }}>취소</button>
           <button onClick={handleSubmit} disabled={!guest || submitting}
