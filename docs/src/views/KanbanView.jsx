@@ -126,12 +126,30 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
     }
   };
 
-  // ── Drag & Drop handlers ──
+  // ── Project stage move ──
 
-  const handleDragStart = (e, shootId) => {
-    e.dataTransfer.setData("text/plain", shootId);
+  const moveProjectStage = async (projectId, newStage) => {
+    setProjects(prev => prev.map(p => p.id === projectId ? { ...p, stage: newStage } : p));
+    try {
+      await fetch(`${cfg.workerUrl}/projects/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id: projectId, stage: newStage }),
+      });
+      fetchData();
+    } catch (err) {
+      console.error("project stage 이동 실패:", err);
+      fetchData();
+    }
+  };
+
+  // ── Drag & Drop handlers ──
+  // Data format: "shoot:id" or "project:id"
+
+  const handleDragStart = (e, type, id) => {
+    e.dataTransfer.setData("text/plain", `${type}:${id}`);
     e.dataTransfer.effectAllowed = "move";
-    setDraggingId(shootId);
+    setDraggingId(id);
   };
 
   const handleDragEnd = () => {
@@ -146,7 +164,6 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
   };
 
   const handleDragLeave = (e, colKey) => {
-    // Only clear if actually leaving the column (not entering a child)
     if (!e.currentTarget.contains(e.relatedTarget)) {
       if (dragOverCol === colKey) setDragOverCol(null);
     }
@@ -155,12 +172,17 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
   const handleDrop = (e, colKey) => {
     e.preventDefault();
     setDragOverCol(null);
-    const shootId = e.dataTransfer.getData("text/plain");
-    if (!shootId) return;
-    // Find current stage
-    const shoot = (Array.isArray(shoots) ? shoots : []).find(s => s.id === shootId);
-    if (shoot && shoot.stage !== colKey) {
-      moveShootStage(shootId, colKey);
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+    const [type, id] = raw.split(":");
+    if (!type || !id) return;
+
+    if (type === "shoot") {
+      const shoot = (Array.isArray(shoots) ? shoots : []).find(s => s.id === id);
+      if (shoot && shoot.stage !== colKey) moveShootStage(id, colKey);
+    } else if (type === "project") {
+      const proj = projects.find(p => p.id === id);
+      if (proj && proj.stage !== colKey) moveProjectStage(id, colKey);
     }
   };
 
@@ -312,7 +334,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                         children={children}
                         onSelectProject={onSelectProject}
                         onNewProject={() => onNewProject?.(item.data.id)}
-                        onDragStart={handleDragStart}
+                        onDragStart={(e) => handleDragStart(e, "shoot", item.data.id)}
                         onDragEnd={handleDragEnd}
                         isDragging={draggingId === item.data.id}
                       />
@@ -322,7 +344,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                     <ShootCard
                       key={item.data.id}
                       shoot={item.data}
-                      onDragStart={handleDragStart}
+                      onDragStart={(e) => handleDragStart(e, "shoot", item.data.id)}
                       onDragEnd={handleDragEnd}
                       isDragging={draggingId === item.data.id}
                     />
@@ -335,6 +357,9 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       project={item.data}
                       shoots={shoots}
                       onClick={() => onSelectProject(item.data.id)}
+                      onDragStart={(e) => handleDragStart(e, "project", item.data.id)}
+                      onDragEnd={handleDragEnd}
+                      isDragging={draggingId === item.data.id}
                     />
                   );
                 }
@@ -418,7 +443,7 @@ function ShootCard({ shoot, onDragStart, onDragEnd, isDragging }) {
   return (
     <div
       draggable
-      onDragStart={(e) => onDragStart(e, shoot.id)}
+      onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       style={{
         background: C.sf, border: `1px solid ${C.bd}`, padding: 14,
@@ -502,7 +527,7 @@ function TransitionCard({ shoot, children, onSelectProject, onNewProject, onDrag
   return (
     <div
       draggable
-      onDragStart={(e) => onDragStart(e, shoot.id)}
+      onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       style={{
         background: C.sf, border: `1px solid #7C3AED40`,
@@ -585,7 +610,7 @@ function TransitionCard({ shoot, children, onSelectProject, onNewProject, onDrag
 // PROJECT CARD (독립 편)
 // ═══════════════════════════════════════════════
 
-function ProjectCard({ project, shoots, onClick }) {
+function ProjectCard({ project, shoots, onClick, onDragStart, onDragEnd, isDragging }) {
   const step = project.currentStep || project.step || "review";
   const stepColor = STEP_COLORS[step] || "#22C55E";
   const stepIdx = STEP_KEYS.indexOf(step);
@@ -596,11 +621,17 @@ function ProjectCard({ project, shoots, onClick }) {
     : null;
 
   return (
-    <div onClick={onClick} style={{
-      background: C.sf, border: `1px solid ${C.bd}`, padding: 14,
-      cursor: "pointer", transition: "border-color 0.1s",
-    }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = "#454B66"}
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onClick}
+      style={{
+        background: C.sf, border: `1px solid ${C.bd}`, padding: 14,
+        cursor: "grab", transition: "border-color 0.1s, opacity 0.2s",
+        opacity: isDragging ? 0.4 : 1,
+      }}
+      onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = "#454B66"; }}
       onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
     >
       {parentShoot && (

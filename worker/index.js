@@ -268,6 +268,20 @@ async function handleSave(body, env, headers) {
       await env.SESSIONS.put("session_index", JSON.stringify(index.slice(0, 200)));
     } catch (e) { console.error("세션 인덱스 업데이트 실패:", e.message); }
 
+    // ── modify 탭 저장 시 videoUrl이 있으면 자동으로 post-production으로 이동 ──
+    if (tab === "modify" && data && data.videoUrl) {
+      try {
+        const projRaw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+        const projIndex = projRaw ? JSON.parse(projRaw) : [];
+        const pi = projIndex.findIndex(p => p.id === id);
+        if (pi >= 0 && (!projIndex[pi].stage || projIndex[pi].stage === "editing")) {
+          projIndex[pi].stage = "post-production";
+          projIndex[pi].updatedAt = savedAt;
+          await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(projIndex));
+        }
+      } catch (e) { console.error("auto stage update failed:", e.message); }
+    }
+
     return new Response(JSON.stringify({ success: true, id }), { headers });
   }
 
@@ -495,6 +509,7 @@ async function handleProjectUpdate(body, env, headers) {
   if (body.editors !== undefined) index[idx].editors = body.editors;
   if (body.memo !== undefined) index[idx].memo = body.memo;
   if (body.fn !== undefined) index[idx].fn = body.fn;
+  if (body.stage !== undefined) index[idx].stage = body.stage;
   index[idx].updatedAt = new Date().toISOString();
 
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
