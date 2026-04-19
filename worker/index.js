@@ -873,8 +873,12 @@ async function handleShootUpdate(body, env, headers) {
   const idx = index.findIndex(s => s.id === id);
   if (idx < 0) return new Response(JSON.stringify({ error: "shoot not found" }), { status: 404, headers });
 
-  // 이전 roles 스냅샷 (신규 멤버 비교용)
+  // 이전 스냅샷 (변경 감지용)
   const oldRoles = body.roles !== undefined ? JSON.parse(JSON.stringify(index[idx].roles || {})) : null;
+  const oldShootDate = index[idx].shootDate;
+  const oldGuest = index[idx].guest;
+  const oldTopic = index[idx].topic;
+  const oldTotalEpisodes = index[idx].totalEpisodes;
 
   if (body.guest !== undefined) index[idx].guest = body.guest;
   if (body.topic !== undefined) index[idx].topic = body.topic;
@@ -887,6 +891,36 @@ async function handleShootUpdate(body, env, headers) {
   index[idx].updatedAt = new Date().toISOString();
 
   await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(index));
+
+  // ── 캘린더 이벤트 업데이트 (날짜/게스트/주제/편수 변경 시) ──
+  const shootForCal = index[idx];
+  if (shootForCal.calendarEventId) {
+    const dateChanged = body.shootDate !== undefined && body.shootDate !== oldShootDate;
+    const guestChanged = body.guest !== undefined && body.guest !== oldGuest;
+    const topicChanged = body.topic !== undefined && body.topic !== oldTopic;
+    const episodesChanged = body.totalEpisodes !== undefined && body.totalEpisodes !== oldTotalEpisodes;
+
+    if (dateChanged || guestChanged || topicChanged || episodesChanged) {
+      try {
+        const updateBody = { action: "updateEvent", eventId: shootForCal.calendarEventId };
+        if (dateChanged && shootForCal.shootDate) {
+          const start = new Date(shootForCal.shootDate);
+          updateBody.startTime = start.toISOString();
+          updateBody.endTime = new Date(start.getTime() + 2 * 60 * 60 * 1000).toISOString();
+        }
+        if (guestChanged || episodesChanged) {
+          const episodeText = shootForCal.totalEpisodes ? ` (${shootForCal.totalEpisodes}편)` : "";
+          updateBody.title = `[촬영] ${shootForCal.guest}${episodeText}`;
+        }
+        if (topicChanged) {
+          updateBody.description = `주제: ${shootForCal.topic || "미정"}\n메모: ${shootForCal.memo || ""}\n등록자: ${shootForCal.creator}`;
+        }
+        await callAppsScript(APPS_SCRIPT_CALENDAR_URL, updateBody);
+      } catch (err) {
+        console.error("updateEvent failed:", err);
+      }
+    }
+  }
 
   // ── 신규 멤버 감지 + 알림 ──
   if (oldRoles && body.roles) {
@@ -983,9 +1017,12 @@ async function handleShootDelete(body, env, headers) {
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
 
-  // shoot_index에서 제거
+  // shoot_index에서 제거 (+ calendarEventId 확보)
   const raw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
   const index = raw ? JSON.parse(raw) : [];
+  const target = index.find(s => s.id === id);
+  const calendarEventId = target?.calendarEventId || null;
+
   const filtered = index.filter(s => s.id !== id);
   await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(filtered));
 
@@ -997,6 +1034,18 @@ async function handleShootDelete(body, env, headers) {
     if (p.parentShootId === id) { p.parentShootId = null; projChanged = true; }
   });
   if (projChanged) await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(projects));
+
+  // Google Calendar 이벤트 삭제
+  if (calendarEventId) {
+    try {
+      await callAppsScript(APPS_SCRIPT_CALENDAR_URL, {
+        action: "deleteEvent",
+        eventId: calendarEventId,
+      });
+    } catch (err) {
+      console.error("deleteEvent failed:", err);
+    }
+  }
 
   return new Response(JSON.stringify({ success: true }), { headers });
 }
