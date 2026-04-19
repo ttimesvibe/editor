@@ -65,7 +65,7 @@ function parseShootDateTime(shoot) {
 
 // ── Episode options ──
 const EPISODE_OPTIONS = [1, 2, 3, 4, null]; // null = 미정
-const EPISODE_LABELS = { 1: "1편", 2: "2편", 3: "3편", 4: "4편", null: "미정" };
+const episodeLabel = (ep) => ep == null ? "미정" : `${ep}편`;
 
 export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot }) {
   const isEdit = !!editShoot;
@@ -330,7 +330,7 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
                         background: color + "15", color: color, cursor: "default" }}>
                         <span style={{ width: 18, height: 18, borderRadius: "50%", display: "flex",
                           alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700,
-                          background: color + "30", color }}>{m.name.charAt(0)}</span>
+                          background: color + "30", color }}>{(m.name || m.email || "?").charAt(0)}</span>
                         {m.name}
                         <span onClick={(e) => { e.stopPropagation(); removeRole(roleKey, m.email); }}
                           style={{ fontSize: 9, opacity: 0.6, cursor: "pointer", marginLeft: 2 }}>✕</span>
@@ -390,7 +390,7 @@ export function ShootModal({ authUser, cfg, onClose, onCreate, shoot: editShoot 
                     background: isActive ? "#4A6CF720" : "#0F1117",
                     color: isActive ? "#7C9DFF" : "#5E6380",
                   }}>
-                  {EPISODE_LABELS[String(ep)]}
+                  {episodeLabel(ep)}
                 </span>
               );
             })}

@@ -357,12 +357,12 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
               {col.key !== "done" && grouped[col.key].map((item) => {
                 if (item.type === "shoot") {
                   if (col.key === "editing") {
-                    const children = projects.filter(p => item.data.childProjectIds?.includes(p.id));
+                    const childProjects = projects.filter(p => item.data.childProjectIds?.includes(p.id));
                     return (
                       <TransitionCard
                         key={item.data.id}
                         shoot={item.data}
-                        children={children}
+                        childProjects={childProjects}
                         onSelectProject={onSelectProject}
                         onNewProject={() => onNewProject?.(item.data.id)}
                         onDragStart={(e) => handleDragStart(e, "shoot", item.data.id)}
@@ -503,7 +503,6 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
   const hasStudioA = shoot.tags?.studioA || shoot.tags?.studioBooked;
   const hasStudioB = shoot.tags?.studioB;
   const hasDemo = shoot.tags?.hasDemo;
-  const hasTags = hasStudioA || hasStudioB || hasDemo;
 
   return (
     <div
@@ -611,7 +610,7 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
 // TRANSITION CARD (원고 편집 — 촬영에서 넘어온 묶음)
 // ═══════════════════════════════════════════════
 
-function TransitionCard({ shoot, children, onSelectProject, onNewProject, onDragStart, onDragEnd, isDragging }) {
+function TransitionCard({ shoot, childProjects, onSelectProject, onNewProject, onDragStart, onDragEnd, isDragging }) {
   return (
     <div
       draggable
@@ -635,9 +634,9 @@ function TransitionCard({ shoot, children, onSelectProject, onNewProject, onDrag
       </div>
 
       {/* Child projects */}
-      {children.length > 0 && (
+      {childProjects.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {children.map(p => {
+          {childProjects.map(p => {
             const step = p.currentStep || p.step || "review";
             const stepColor = STEP_COLORS[step] || "#22C55E";
             const stepIdx = STEP_KEYS.indexOf(step);

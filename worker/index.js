@@ -9,6 +9,12 @@ const APPS_SCRIPT_EMAIL_URL = "https://script.google.com/macros/s/AKfycbxUH1FPI7
 // 캘린더 전용 (ttimes6000 계정)
 const APPS_SCRIPT_CALENDAR_URL = "https://script.google.com/macros/s/AKfycbxrH2fv0WMEAfBgBwXQs-ygTq9XamQqBSs36Pz6DiqYnx1wrPyfODxm5QlFwgganB7D1w/exec";
 
+// 캘린더 초대 이메일 매핑 (CMS 이메일 → 개인 캘린더)
+// 필요 시 여기에 추가만 하면 됨
+const CALENDAR_EMAIL_MAP = {
+  "hjae@mt.co.kr": "repfootball@gmail.com",
+};
+
 // KST(+09:00) 기준 날짜 포맷팅 — Worker가 UTC에서 실행되므로 직접 계산
 function formatKSTDate(isoString) {
   if (!isoString) return "미정";
@@ -763,9 +769,6 @@ async function handleShootCreate(body, user, env, headers) {
       const startTime = new Date(shoot.shootDate);
       const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
       // 캘린더 초대 이메일 매핑 (CMS 이메일 → 개인 캘린더)
-      const CALENDAR_EMAIL_MAP = {
-        "hjae@mt.co.kr": "repfootball@gmail.com",
-      };
       // 캘린더 초대: 촬영 + 진행 담당만 (원고/영상 편집은 이메일만)
       const attendees = [
         ...(shoot.roles?.filming || []),
@@ -784,16 +787,22 @@ async function handleShootCreate(body, user, env, headers) {
       console.log("[shoot create] Apps Script status:", calRes.status);
       const calText = await calRes.clone().text();
       console.log("[shoot create] Apps Script response (first 200):", calText.slice(0, 200));
-      // calendarEventId 저장
+      // calendarEventId 저장 — KV를 다시 읽어 race condition 방지
       try {
         const calData = await calRes.json();
         if (calData?.eventId) {
           shoot.calendarEventId = calData.eventId;
-          // index에도 반영
-          index[0].calendarEventId = calData.eventId;
-          await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(index));
+          const freshRaw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
+          const freshIndex = freshRaw ? JSON.parse(freshRaw) : [];
+          const freshIdx = freshIndex.findIndex(s => s.id === id);
+          if (freshIdx >= 0) {
+            freshIndex[freshIdx].calendarEventId = calData.eventId;
+            await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(freshIndex));
+          }
         }
-      } catch {}
+      } catch (parseErr) {
+        console.warn("[shoot create] calendarEventId 저장 실패:", parseErr);
+      }
     } catch (calErr) {
       console.error("Calendar event creation failed:", calErr);
     }
@@ -922,34 +931,52 @@ async function handleShootUpdate(body, env, headers) {
     }
   }
 
-  // ── 신규 멤버 감지 + 알림 ──
+  // ── 멤버 변경 감지 + 알림 ──
   if (oldRoles && body.roles) {
     const shoot = index[idx];
-    const CALENDAR_EMAIL_MAP = { "hjae@mt.co.kr": "repfootball@gmail.com" };
     const ROLE_NAMES = { filming: "촬영", progress: "진행", scriptEdit: "원고 편집", videoEdit: "영상 편집" };
 
-    // 이전 이메일 Set
+    // 이전 전체 멤버 Set
     const oldEmailSet = new Set();
     ["filming","progress","scriptEdit","videoEdit"].forEach(rk => {
       (oldRoles[rk] || []).forEach(m => oldEmailSet.add(m.email));
     });
 
-    // 신규 멤버 추출
-    const newCalendarMembers = []; // 촬영+진행 신규 → 캘린더 추가
-    const newAllMembers = [];      // 전체 신규 → 이메일
+    // 이전 캘린더 대상(촬영+진행) Set
+    const oldCalEmailSet = new Set();
+    ["filming","progress"].forEach(rk => {
+      (oldRoles[rk] || []).forEach(m => oldCalEmailSet.add(m.email));
+    });
+
+    // 새 캘린더 대상(촬영+진행) Set
+    const newCalEmailSet = new Set();
+    ["filming","progress"].forEach(rk => {
+      (body.roles[rk] || []).forEach(m => newCalEmailSet.add(m.email));
+    });
+
+    // 신규 멤버 (전체 4개 역할 기준 — 이메일 알림용)
+    const newAllMembers = [];
     ["filming","progress","scriptEdit","videoEdit"].forEach(rk => {
       (body.roles[rk] || []).forEach(m => {
-        if (!oldEmailSet.has(m.email)) {
-          newAllMembers.push(m);
-          if (rk === "filming" || rk === "progress") newCalendarMembers.push(m);
-        }
+        if (!oldEmailSet.has(m.email)) newAllMembers.push(m);
       });
     });
 
-    // 1) 캘린더 참석자 추가 (촬영/진행 신규만)
-    if (newCalendarMembers.length > 0 && shoot.calendarEventId) {
+    // 캘린더에 추가할 대상: 새 캘린더 대상 중 이전엔 캘린더 대상이 아니었던 사람
+    const newCalendarEmails = [];
+    newCalEmailSet.forEach(email => {
+      if (!oldCalEmailSet.has(email)) newCalendarEmails.push(email);
+    });
+    // 캘린더에서 제거할 대상: 이전엔 캘린더 대상이었으나 지금은 아닌 사람
+    const removedCalendarEmails = [];
+    oldCalEmailSet.forEach(email => {
+      if (!newCalEmailSet.has(email)) removedCalendarEmails.push(email);
+    });
+
+    // 1a) 캘린더 참석자 추가
+    if (newCalendarEmails.length > 0 && shoot.calendarEventId) {
       try {
-        const newGuests = newCalendarMembers.map(m => CALENDAR_EMAIL_MAP[m.email] || m.email).filter(Boolean);
+        const newGuests = newCalendarEmails.map(e => CALENDAR_EMAIL_MAP[e] || e).filter(Boolean);
         await callAppsScript(APPS_SCRIPT_CALENDAR_URL, {
             action: "addGuests",
             eventId: shoot.calendarEventId,
@@ -957,6 +984,20 @@ async function handleShootUpdate(body, env, headers) {
         });
       } catch (err) {
         console.error("addGuests failed:", err);
+      }
+    }
+
+    // 1b) 캘린더 참석자 제거
+    if (removedCalendarEmails.length > 0 && shoot.calendarEventId) {
+      try {
+        const removedGuests = removedCalendarEmails.map(e => CALENDAR_EMAIL_MAP[e] || e).filter(Boolean);
+        await callAppsScript(APPS_SCRIPT_CALENDAR_URL, {
+            action: "removeGuests",
+            eventId: shoot.calendarEventId,
+            guests: removedGuests,
+        });
+      } catch (err) {
+        console.error("removeGuests failed:", err);
       }
     }
 
