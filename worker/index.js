@@ -109,14 +109,39 @@ export default {
       });
     }
 
-    // /health — 인증 불필요, 워커 동작 여부 확인용 (region reset 등 감지)
+    // /health — 인증 불필요, 워커 실제 동작 가능 여부 확인 (region reset 등 감지)
     {
       const _url = new URL(request.url);
       if (_url.pathname === "/health" && request.method === "GET") {
-        // KV 바인딩까지 살아있는지 가벼운 확인 (실패해도 상관없음)
-        let kvOk = false;
-        try { await env.SESSIONS.get("__healthcheck__"); kvOk = true; } catch { kvOk = false; }
-        return new Response(JSON.stringify({ ok: true, kv: kvOk, ts: Date.now() }), {
+        const checks = { ts: Date.now() };
+
+        // 1) KV 읽기
+        try {
+          await env.SESSIONS.get("__healthcheck_read__");
+          checks.kvRead = true;
+        } catch (e) { checks.kvRead = false; checks.kvReadErr = e.message; }
+
+        // 2) KV 쓰기 (write + delete) — region 문제 시 가장 먼저 실패하는 경향
+        try {
+          const k = "__healthcheck_write__";
+          await env.SESSIONS.put(k, String(Date.now()), { expirationTtl: 60 });
+          await env.SESSIONS.delete(k);
+          checks.kvWrite = true;
+        } catch (e) { checks.kvWrite = false; checks.kvWriteErr = e.message; }
+
+        // 3) 외부 HTTPS — OpenAI 엔드포인트로 reachability 테스트 (401이어도 응답 오면 OK)
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 4000);
+          const r = await fetch("https://api.openai.com/v1/models", { method: "GET", signal: ctrl.signal });
+          clearTimeout(t);
+          checks.externalHttps = r.status > 0;
+          checks.externalHttpsCode = r.status;
+        } catch (e) { checks.externalHttps = false; checks.externalHttpsErr = e.message; }
+
+        const ok = checks.kvRead && checks.kvWrite && checks.externalHttps;
+        return new Response(JSON.stringify({ ok, ...checks }), {
+          status: ok ? 200 : 503,
           headers: { ...corsHeaders, "Access-Control-Allow-Origin": "*" },
         });
       }
