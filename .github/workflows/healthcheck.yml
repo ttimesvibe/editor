@@ -1,0 +1,118 @@
+# alleditor 워커 헬스체크
+# - 매 10분 (KST 07:00 ~ 23:59 사이만 실행, 00:00~06:59 KST는 스킵)
+# - cron 시간은 UTC 기준이라 KST = UTC+9
+#   KST 07:00 → UTC 22:00 (전날)
+#   KST 23:59 → UTC 14:59
+#   → UTC hours: 22, 23, 0~14
+# - 실패 시 GitHub Issue 자동 생성 (중복 방지)
+name: Worker Healthcheck
+
+on:
+  schedule:
+    - cron: '*/10 0-14,22-23 * * *'
+  workflow_dispatch: {}  # 수동 실행 가능
+
+permissions:
+  issues: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call /health
+        id: check
+        run: |
+          set -e
+          URL="https://alleditor.ttimes6000.workers.dev/health"
+          echo "Pinging $URL"
+          # 타임아웃 10초, 최대 2회 재시도(15초 간격)
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -sS -o /tmp/body.json -w "%{http_code}" --max-time 10 "$URL" || echo "000")
+            BODY=$(cat /tmp/body.json 2>/dev/null || echo "")
+            echo "Attempt $i → HTTP $HTTP_CODE → $BODY"
+            if [ "$HTTP_CODE" = "200" ] && echo "$BODY" | grep -q '"ok":true'; then
+              echo "status=ok" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ $i -lt 3 ]; then sleep 15; fi
+          done
+          echo "status=fail" >> "$GITHUB_OUTPUT"
+          echo "last_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "last_body=$(echo "$BODY" | tr -d '\n' | head -c 200)" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '🚨 Worker DOWN — alleditor /health 실패';
+            // 이미 열려있는 동일 제목 이슈 있으면 댓글로만 추가 (중복 생성 방지)
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'incident'
+            });
+            const dup = existing.data.find(i => i.title === title);
+            const body = [
+              `**시각**: ${new Date().toISOString()} (UTC)`,
+              `**워커**: https://alleditor.ttimes6000.workers.dev/health`,
+              `**원인 후보**:`,
+              `- Cloudflare Region 설정 reset (배포 직후 자주 발생)`,
+              `- KV 일일 한도 초과 (Free 플랜)`,
+              `- Apps Script 외부 의존 장애`,
+              `- 워커 코드 자체 에러`,
+              ``,
+              `**조치**:`,
+              `1. Cloudflare 대시보드 → alleditor → Settings → Placement Region 확인`,
+              `2. KV 사용량 확인`,
+              `3. wrangler tail로 실시간 로그 확인`,
+              ``,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            ].join('\n');
+            if (dup) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `🔁 헬스체크 또 실패\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['incident'],
+              });
+            }
+
+      - name: Auto-close issue on recovery
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '🚨 Worker DOWN — alleditor /health 실패';
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'incident'
+            });
+            const dup = open.data.find(i => i.title === title);
+            if (dup) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `✅ 자동 복구 — ${new Date().toISOString()} 헬스체크 정상`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                state: 'closed',
+              });
+            }
