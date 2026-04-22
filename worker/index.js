@@ -109,6 +109,19 @@ export default {
       });
     }
 
+    // /health — 인증 불필요, 워커 동작 여부 확인용 (region reset 등 감지)
+    {
+      const _url = new URL(request.url);
+      if (_url.pathname === "/health" && request.method === "GET") {
+        // KV 바인딩까지 살아있는지 가벼운 확인 (실패해도 상관없음)
+        let kvOk = false;
+        try { await env.SESSIONS.get("__healthcheck__"); kvOk = true; } catch { kvOk = false; }
+        return new Response(JSON.stringify({ ok: true, kv: kvOk, ts: Date.now() }), {
+          headers: { ...corsHeaders, "Access-Control-Allow-Origin": "*" },
+        });
+      }
+    }
+
     // JWT 인증 검증
     const user = await verifyAuth(request, env);
     if (!user) {
