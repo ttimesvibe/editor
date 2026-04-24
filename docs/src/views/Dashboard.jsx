@@ -98,6 +98,12 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const popupRef = useRef(null);
 
+  // Trash (admin only)
+  const isAdmin = authUser?.role === "admin";
+  const [trashList, setTrashList] = useState([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [purgingProject, setPurgingProject] = useState(null); // 영구삭제 confirm 대상
+
   // ── Sync body background with theme ──
   useEffect(() => {
     document.body.style.background = C.bg;
@@ -108,6 +114,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
 
   const fetchProjects = useCallback(async () => {
     if (!cfg?.workerUrl) return;
+    if (filter === "trash") return; // 휴지통은 별도 경로
     setLoading(true);
     try {
       // "wip" → Worker expects "active"
@@ -134,6 +141,59 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
   }, [cfg, page, filter, search, projectRefreshKey]);
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
+
+  // ── Trash 조회 (admin 전용) ──
+  const fetchTrash = useCallback(async () => {
+    if (!cfg?.workerUrl || !isAdmin) return;
+    setTrashLoading(true);
+    try {
+      const r = await fetch(`${cfg.workerUrl}/projects/trash`, { headers: authHeaders() });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setTrashList(data.trash || []);
+    } catch (err) {
+      console.error("[Dashboard] trash fetch error:", err);
+    } finally {
+      setTrashLoading(false);
+    }
+  }, [cfg, isAdmin]);
+
+  // admin 이 접속하면 휴지통도 미리 한 번 가져와서 탭 카운트 표시
+  useEffect(() => { if (isAdmin) fetchTrash(); }, [fetchTrash, isAdmin, projectRefreshKey]);
+
+  // ── 복구 ──
+  const restoreProject = async (id) => {
+    try {
+      const r = await fetch(`${cfg.workerUrl}/projects/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id }),
+      });
+      if (!r.ok) { alert("복구 실패: " + r.status); return; }
+      fetchTrash();
+      fetchProjects();
+    } catch (err) {
+      console.error("프로젝트 복구 실패:", err);
+      alert("복구 실패: " + err.message);
+    }
+  };
+
+  // ── 영구 삭제 (admin 전용) ──
+  const purgeProject = async (id) => {
+    try {
+      const r = await fetch(`${cfg.workerUrl}/projects/trash/purge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ ids: [id] }),
+      });
+      if (!r.ok) { alert("영구삭제 실패: " + r.status); return; }
+      setPurgingProject(null);
+      fetchTrash();
+    } catch (err) {
+      console.error("영구 삭제 실패:", err);
+      alert("영구삭제 실패: " + err.message);
+    }
+  };
 
   // Reset page when filter or search changes
   useEffect(() => { setPage(1); }, [filter, search]);
@@ -362,6 +422,18 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
   const wipCount = counts.wip;
   const doneCount = counts.done;
   const allCount = counts.all;
+  const trashCount = trashList.length;
+
+  // 휴지통은 admin 에게만 노출 (FILTER_TABS 는 기본 4개, 여기에 admin 때만 +1)
+  const filterTabs = isAdmin
+    ? [...FILTER_TABS, { key: "trash", label: "휴지통" }]
+    : FILTER_TABS;
+
+  // 휴지통 모드의 표시 대상 (클라 side fn 검색)
+  const isTrashMode = filter === "trash";
+  const searchedTrash = search
+    ? trashList.filter(t => (t.fn || "").toLowerCase().includes(search.toLowerCase()))
+    : trashList;
 
   // ── Main Render ──
 
@@ -419,6 +491,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
             </h1>
             <p style={{ fontSize: 13, color: "#8B8FA3", margin: "4px 0 0" }}>
               총 {allCount}개 · 진행중 {wipCount} · 완료 {doneCount}
+              {isAdmin && trashCount > 0 && <> · 휴지통 {trashCount}</>}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
@@ -511,11 +584,12 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
           marginTop: 20, marginBottom: 16,
         }}>
           <div style={{ display: "flex", gap: 0 }}>
-            {FILTER_TABS.map(tab => {
+            {filterTabs.map(tab => {
               const isActive = filter === tab.key;
               const count = tab.key === "all" ? allCount
                 : tab.key === "wip" ? wipCount
                 : tab.key === "done" ? doneCount
+                : tab.key === "trash" ? trashCount
                 : counts.mine;
               return (
                 <button
@@ -573,29 +647,111 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
             <span>#</span>
             <span>상태</span>
             <span>프로젝트</span>
-            <span>편집자</span>
-            <span>현재 단계</span>
-            <span>진행</span>
-            <span>날짜</span>
+            <span>{isTrashMode ? "편집자" : "편집자"}</span>
+            <span>{isTrashMode ? "삭제자" : "현재 단계"}</span>
+            <span>{isTrashMode ? "경과" : "진행"}</span>
+            <span>{isTrashMode ? "삭제일" : "날짜"}</span>
             <span></span>
           </div>
 
           {/* Loading State */}
-          {loading && (
+          {((isTrashMode && trashLoading) || (!isTrashMode && loading)) && (
             <div style={{ padding: "40px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
               불러오는 중...
             </div>
           )}
 
           {/* Empty State */}
-          {!loading && projects.length === 0 && (
+          {!loading && !isTrashMode && projects.length === 0 && (
             <div style={{ padding: "60px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
               {search ? "검색 결과가 없습니다." : "프로젝트가 없습니다."}
             </div>
           )}
+          {!trashLoading && isTrashMode && searchedTrash.length === 0 && (
+            <div style={{ padding: "60px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
+              {search ? "검색 결과가 없습니다." : "휴지통이 비어있습니다."}
+            </div>
+          )}
 
-          {/* Project Rows */}
-          {!loading && projects.map((proj, idx) => {
+          {/* ── Trash Rows ── */}
+          {!trashLoading && isTrashMode && searchedTrash.map((t, idx) => {
+            const rowNum = searchedTrash.length - idx;
+            const editors = t.editors || [];
+            return (
+              <div
+                key={t.id || idx}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
+                  gap: 0, padding: "12px 12px",
+                  borderBottom: `1px solid ${C.bd}`,
+                  alignItems: "center",
+                  cursor: "default",
+                  transition: "background 0.12s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = C.glassHover}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+              >
+                <span style={{ fontSize: 12, color: "#5E6380", fontVariantNumeric: "tabular-nums" }}>{rowNum}</span>
+                <span style={{
+                  display: "inline-block", padding: "2px 8px", borderRadius: 4,
+                  fontSize: 11, fontWeight: 600, lineHeight: "18px",
+                  color: "#8B8FA3", background: "rgba(139,143,163,0.15)",
+                }}>삭제됨</span>
+                <span style={{
+                  fontSize: 13, fontWeight: 500, color: C.tx,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  paddingRight: 12,
+                }} title={t.fn}>
+                  {truncate(t.fn || "제목 없음", 40)}
+                </span>
+                {renderEditors(editors, t.id, null)}
+                <span style={{ fontSize: 12, color: "#8B8FA3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={t.deletedBy || ""}>
+                  {(t.deletedBy || "-").split("@")[0]}
+                </span>
+                <span style={{ fontSize: 12, color: "#8B8FA3" }}>
+                  {typeof t.daysInTrash === "number" ? `${t.daysInTrash}일` : "-"}
+                </span>
+                <div style={{ textAlign: "right", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: 11, color: "#5E6380" }}>{shortDate(t.deletedAt)}</div>
+                </div>
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); restoreProject(t.id); }}
+                    title="프로젝트 복구"
+                    style={{
+                      background: "none", border: `1px solid rgba(34,197,94,0.3)`, cursor: "pointer",
+                      color: "#22C55E", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
+                      transition: "background 0.15s, border-color 0.15s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(34,197,94,0.15)"; e.currentTarget.style.borderColor = "#22C55E"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(34,197,94,0.3)"; }}
+                  >
+                    복구
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPurgingProject(t); }}
+                    title="영구 삭제 (되돌릴 수 없음)"
+                    style={{
+                      background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
+                      color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
+                      transition: "background 0.15s, border-color 0.15s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
+                  >
+                    영구삭제
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Project Rows (일반 모드) */}
+          {!loading && !isTrashMode && projects.map((proj, idx) => {
             const step = proj.currentStep || proj.step || "review";
             const isDone = step === "done";
             const rowNum = total - ((page - 1) * PER_PAGE + idx);
@@ -690,8 +846,8 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
           })}
         </div>
 
-        {/* ── Pagination ── */}
-        {renderPagination()}
+        {/* ── Pagination (일반 모드만) ── */}
+        {!isTrashMode && renderPagination()}
 
         </>}
       </div>
@@ -786,6 +942,49 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
         </div>
         );
       })()}
+
+      {/* Purge Confirmation Modal (영구 삭제, 약한 확인) */}
+      {purgingProject && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: C.sf, borderRadius: 12, padding: 24,
+            border: `1px solid ${C.bd}`, maxWidth: 400, width: "100%",
+            fontFamily: FN,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#EF4444", marginBottom: 12 }}>
+              영구 삭제
+            </div>
+            <div style={{ fontSize: 13, color: C.txM, marginBottom: 8, lineHeight: 1.5 }}>
+              <strong style={{ color: C.tx }}>{truncate(purgingProject.fn || "", 30)}</strong> 프로젝트를 영구 삭제합니다.
+            </div>
+            <div style={{ fontSize: 13, color: C.txM, marginBottom: 16, lineHeight: 1.5 }}>
+              휴지통에서 완전히 제거되며, <strong style={{ color: "#EF4444" }}>복구할 수 없습니다</strong>.
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setPurgingProject(null)}
+                style={{
+                  padding: "8px 16px", borderRadius: 6, border: `1px solid ${C.bd}`,
+                  background: "transparent", color: C.tx, fontSize: 13,
+                  cursor: "pointer", fontFamily: FN,
+                }}
+              >취소</button>
+              <button
+                onClick={() => purgeProject(purgingProject.id)}
+                style={{
+                  padding: "8px 16px", borderRadius: 6, border: "none",
+                  background: "#EF4444", color: "#fff",
+                  fontSize: 13, fontWeight: 600,
+                  cursor: "pointer", fontFamily: FN,
+                }}
+              >영구 삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deletingProject && (() => {
