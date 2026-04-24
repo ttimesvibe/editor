@@ -88,6 +88,48 @@ async function verifyAuth(request, env) {
   }
 }
 
+// ── 권한 체크 헬퍼 ──
+// admin 식별: 1차 JWT role, 2차 team_members KV fallback.
+// team_members 는 auth Worker 가 /admin/users 로 동기화해 editor KV에 캐시하는 배열.
+async function isAdmin(user, env) {
+  if (!user?.sub) return false;
+  if (user.role === "admin") return true;
+  try {
+    const raw = await env.SESSIONS.get("team_members");
+    if (!raw) return false;
+    const members = JSON.parse(raw);
+    const me = members.find(m => m.email === user.sub);
+    return me?.role === "admin";
+  } catch { return false; }
+}
+
+// 프로젝트 수정 가능 여부: creator OR editors 배열 포함 OR admin
+async function canEdit(proj, user, env) {
+  if (!proj || !user?.sub) return false;
+  if (proj.creatorEmail === user.sub) return true;
+  if ((proj.editors || []).some(e => e?.email === user.sub)) return true;
+  return await isAdmin(user, env);
+}
+
+// 프로젝트 삭제 가능 여부: creator OR admin (editors 는 삭제 불가)
+async function canDelete(proj, user, env) {
+  if (!proj || !user?.sub) return false;
+  if (proj.creatorEmail === user.sub) return true;
+  return await isAdmin(user, env);
+}
+
+// 프로젝트 복구 가능 여부: creator OR deletedBy(본인이 지운 경우) OR admin
+async function canRestore(proj, user, env) {
+  if (!proj || !user?.sub) return false;
+  if (proj.creatorEmail === user.sub) return true;
+  if (proj.deletedBy === user.sub) return true;
+  return await isAdmin(user, env);
+}
+
+function forbidden(headers, msg) {
+  return new Response(JSON.stringify({ error: msg || "권한이 없습니다" }), { status: 403, headers });
+}
+
 export default {
   async fetch(request, env) {
     const allowedOrigin = getAllowedOrigin(request);
@@ -216,7 +258,7 @@ if (path === "/debug-location") {
     if (path === "/projects/update" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectUpdate(body, env, corsHeaders);
+        return await handleProjectUpdate(body, user, env, corsHeaders);
       } catch (err) {
         return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
@@ -255,7 +297,7 @@ if (path === "/debug-location") {
     if (path === "/projects/update-step" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectUpdateStep(body, env, corsHeaders);
+        return await handleProjectUpdateStep(body, user, env, corsHeaders);
       } catch (err) {
         return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
@@ -608,7 +650,7 @@ async function handleProjectCreate(body, user, env, headers) {
   return new Response(JSON.stringify({ success: true, id, project }), { headers });
 }
 
-async function handleProjectUpdate(body, env, headers) {
+async function handleProjectUpdate(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
@@ -617,6 +659,11 @@ async function handleProjectUpdate(body, env, headers) {
   const index = raw ? JSON.parse(raw) : [];
   const idx = index.findIndex(p => p.id === id);
   if (idx < 0) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
+
+  // 권한: creator OR project.editors 포함 OR admin 만 수정 가능
+  if (!(await canEdit(index[idx], user, env))) {
+    return forbidden(headers, "이 프로젝트를 수정할 권한이 없습니다");
+  }
 
   const oldParentShootId = index[idx].parentShootId || null;
   const oldStage = index[idx].stage || null;
@@ -709,6 +756,11 @@ async function handleProjectDelete(body, user, env, headers) {
   if (!target) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
   if (target.deleted) return new Response(JSON.stringify({ success: true, already: "deleted" }), { headers });
 
+  // 권한: creator 또는 admin 만 삭제 가능 (project.editors 는 삭제 불가)
+  if (!(await canDelete(target, user, env))) {
+    return forbidden(headers, "프로젝트를 삭제할 권한이 없습니다");
+  }
+
   const now = new Date().toISOString();
   const deletedBy = user?.sub || user?.email || "unknown";
   target.deleted = true;
@@ -743,6 +795,10 @@ async function handleProjectDelete(body, user, env, headers) {
 // ── 휴지통 목록 — deleted=true 프로젝트 전부. 자동 영구삭제 없음, 관리자 수동 처리. ──
 async function handleProjectTrash(user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  // 권한: admin 전용 (타인 삭제분도 노출되므로)
+  if (!(await isAdmin(user, env))) {
+    return forbidden(headers, "휴지통은 관리자만 조회할 수 있습니다");
+  }
   const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
   const index = raw ? JSON.parse(raw) : [];
   const now = Date.now();
@@ -774,6 +830,11 @@ async function handleProjectRestore(body, user, env, headers) {
   if (!target) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
   if (!target.deleted) return new Response(JSON.stringify({ success: true, already: "active" }), { headers });
 
+  // 권한: creator OR 본인이 삭제한 경우(deletedBy) OR admin
+  if (!(await canRestore(target, user, env))) {
+    return forbidden(headers, "프로젝트를 복구할 권한이 없습니다");
+  }
+
   delete target.deleted;
   delete target.deletedAt;
   delete target.deletedBy;
@@ -804,6 +865,10 @@ async function handleProjectRestore(body, user, env, headers) {
 // 안전 장치: (1) ids 배열 필수, (2) deleted=true 검사, (3) active 프로젝트 차단
 async function handleProjectTrashPurge(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  // 권한: admin 전용 (복구 불가능한 파괴적 작업)
+  if (!(await isAdmin(user, env))) {
+    return forbidden(headers, "영구 삭제는 관리자만 수행할 수 있습니다");
+  }
   const { ids } = body || {};
   if (!Array.isArray(ids) || ids.length === 0) {
     return new Response(JSON.stringify({ error: "ids (non-empty array) required" }), { status: 400, headers });
@@ -867,7 +932,7 @@ async function handleProjectTrashPurge(body, user, env, headers) {
   return new Response(JSON.stringify(result), { headers });
 }
 
-async function handleProjectUpdateStep(body, env, headers) {
+async function handleProjectUpdateStep(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id, step, stepIndex } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
@@ -876,6 +941,11 @@ async function handleProjectUpdateStep(body, env, headers) {
   const index = raw ? JSON.parse(raw) : [];
   const idx = index.findIndex(p => p.id === id);
   if (idx < 0) return new Response(JSON.stringify({ success: true }), { headers }); // 프로젝트 없으면 무시
+
+  // 권한: 수정과 동일 — creator OR project.editors OR admin
+  if (!(await canEdit(index[idx], user, env))) {
+    return forbidden(headers, "이 프로젝트의 단계를 변경할 권한이 없습니다");
+  }
 
   if (stepIndex !== undefined && index[idx].stepProgress) {
     index[idx].stepProgress[stepIndex] = true;
