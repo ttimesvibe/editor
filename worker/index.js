@@ -675,19 +675,20 @@ async function handleProjectUpdate(body, user, env, headers) {
   if (body.stage !== undefined) index[idx].stage = body.stage;
   if (body.parentShootId !== undefined) index[idx].parentShootId = body.parentShootId || null;
 
-  // stage가 "done"으로 변경 → 게시판 완료 버튼과 동일 효과 (currentStep/status 동기화)
+  // stage 변경 시 status 만 동기화. currentStep / stepProgress 는 작업 상태이므로 보존.
   if (body.stage !== undefined && body.stage !== oldStage) {
     if (body.stage === "done") {
-      index[idx].currentStep = "done";
+      // 칸반 "표출 완료" 드래그 → 게시판 완료와 동기
       index[idx].status = "done";
-      // stepProgress 전 단계 체크 처리 (선택)
-      if (Array.isArray(index[idx].stepProgress)) {
-        index[idx].stepProgress = index[idx].stepProgress.map(() => true);
-      }
+      if (oldStage && oldStage !== "done") index[idx]._preDoneStage = oldStage;
+      // currentStep, stepProgress 는 건드리지 않음 — 작업 상태 보존
     } else if (oldStage === "done") {
-      // done → 다른 stage로 복원
-      if (index[idx].currentStep === "done") index[idx].currentStep = "review";
+      // 표출 완료 → 다른 컬럼 드래그: status 복원. body.stage 는 이미 적용됨 (line 675).
       if (index[idx].status === "done") index[idx].status = "active";
+      delete index[idx]._preDoneStage;
+      // 기존 데이터 호환: 과거 완료 처리로 currentStep 이 "done" 으로 박혀있으면 review 로 리셋
+      if (index[idx].currentStep === "done") index[idx].currentStep = "review";
+      // 새 데이터에서는 currentStep 을 건드리지 않음 — 작업 단계 유지
     }
   }
 
@@ -951,15 +952,33 @@ async function handleProjectUpdateStep(body, user, env, headers) {
     index[idx].stepProgress[stepIndex] = true;
   }
   if (step) {
-    index[idx].currentStep = step;
+    // "완료" 와 "작업 단계 전환" 을 구분.
+    // 완료 처리 / 복원은 status·stage 만 토글하고 currentStep / stepProgress 는 보존한다.
+    const wasDone = index[idx].status === "done";
     if (step === "done") {
+      // 완료 처리
       index[idx].status = "done";
-      // 게시판 완료 → 칸반도 표출 완료로 동기화
-      index[idx].stage = "done";
-    } else if (index[idx].status === "done") {
+      if (index[idx].stage !== "done") {
+        // 칸반 "표출 완료" 동기화 + 이전 stage 백업 (복원 시 되돌리기 위함)
+        index[idx]._preDoneStage = index[idx].stage || null;
+        index[idx].stage = "done";
+      }
+      // currentStep, stepProgress 는 건드리지 않음 — 작업 상태 보존
+    } else if (wasDone) {
+      // 복원
       index[idx].status = "active";
-      // 복원 시 stage도 editing으로 되돌림 (기본값)
-      if (index[idx].stage === "done") index[idx].stage = "editing";
+      if (index[idx].stage === "done") {
+        index[idx].stage = index[idx]._preDoneStage || "editing";
+        delete index[idx]._preDoneStage;
+      }
+      // 기존 데이터 호환: 과거 완료 처리로 currentStep 이 "done" 으로 덮인 경우엔 요청한 step 으로 교체
+      if (index[idx].currentStep === "done") {
+        index[idx].currentStep = step;
+      }
+      // 그 외에는 currentStep 을 건드리지 않음 — 완료 처리 때 보존된 원 단계 유지
+    } else {
+      // 일반 단계 전환 (완료·복원이 아닌 경우)
+      index[idx].currentStep = step;
     }
   }
   index[idx].updatedAt = new Date().toISOString();
