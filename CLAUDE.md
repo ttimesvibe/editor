@@ -21,10 +21,15 @@
 - **ttimesvibe `ttimes-editor`** = refactor-track 테스트 — Kanban 뷰, 역할 배정, 촬영 일정, "내 프로젝트만 보기" 같은 **신규 기능을 이쪽에 먼저 구현**해 테스터들이 돌려본 뒤 검증이 끝나면 prod(alleditor)로 promote.
 - 같은 사용자가 **양쪽에 동일/유사 프로젝트를 나란히 만들어** 비교하기도 함 ("김민정 6강" vs "김민정 6강 싱크" 같은 이름 중복). 공통 프로젝트의 updatedAt 이 test 쪽이 더 최신인 것도 이 때문 — 테스터가 Kanban 에서 같은 프로젝트를 만지는 중.
 
-**함의**:
-- **양쪽 KV 를 서로 동기화하지 않는다**. 목적이 다르기 때문에 drift 는 정상.
+**함의 (평상시)**:
+- 양쪽 KV 는 **평상시에는 서로 동기화하지 않는다**. 목적이 다르기 때문에 drift 는 정상.
 - test-side 에 기능이 안착하면 **코드를 prod 로 promote**, KV 데이터는 각자 유지.
-- "이관(migrate) / diff & sync" 같은 접근은 **이 프로젝트에 틀린 프레임**. 올바른 접근: 양쪽 환경을 각자의 목적대로 유지하되, **코드 동기화 루틴만 잘 관리**.
+
+**예외: 오라우팅 사고 발생 시 일회성 복구 (IMPORTANT)**
+- 2026-04-19~04-24 사이 **prod 프론트엔드 번들에 test worker URL 이 잘못 박혀 배포된 drift 사고**가 있었음 (`index-D0qqRa9e.js` 번들, `docs/src/utils/config.js` 는 올바르지만 temp 디렉터리 빌드 경로에서 구 config 가 쓰여 발생).
+- 구 번들이 캐시된 팀원이 저장을 누르면 **prod 데이터가 test KV 로 빨려들어감**. 실제로 오늘 diff 에서 공통 프로젝트 6개가 "prod 는 4/19~4/21 이후 안 건드렸는데 test 만 4/24 에 업데이트" 패턴으로 확인됨 — 즉 **prod 사용자의 저장이 test 로 오라우팅됨**.
+- 이 경우 **test→prod 일회성 회수** 가 필요. 절차: 3-way diff → 사용자 리뷰 → dry-run → 백업 후 이관 → 검증. 집계 키(`project_index`, `session_index`) 는 **자동 이관 금지, 수동 머지 필수** (test 의 project_index 를 그대로 prod 에 덮으면 test-only 프로젝트가 prod 에 들어오고 prod-only 프로젝트가 사라짐).
+- "의도적 병행 운영" 을 이유로 drift 복구를 생략하면 **팀원 작업물 유실**이 된다. 판단 기준: **같은 프로젝트 ID 가 양쪽에 있고 test 가 최신** → 오라우팅 의심 → 복구 대상. **서로 다른 ID, 이름만 비슷** (예: "김민정 6강 싱크" vs "김민정 6강") → Kanban 테스트용 병행 프로젝트, 복구 대상 아님.
 
 - `wrangler whoami` 시 OAuth 로그인 이메일은 `ttimesvibe@gmail.com` 이지만 두 계정 모두 권한을 가진 상태.
 - `worker/wrangler.toml` 에 `account_id = "d556c524..."` 가 하드코딩돼 있어 기본 타깃은 **프로드(ttimes6000)**.
