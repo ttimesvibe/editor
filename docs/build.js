@@ -1,6 +1,7 @@
 // Build helper: swap index.html to dev entry → vite build → copy dist output back
 // + Drift guard: ensure config.js workerUrl is canonical and no stale URLs leak into bundle
-import { readFileSync, writeFileSync, cpSync, readdirSync } from "fs";
+// + Stale-bundle purge: remove assets/*.js not referenced by index.html
+import { readFileSync, writeFileSync, cpSync, readdirSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 
@@ -62,6 +63,22 @@ try {
 cpSync("dist/assets", "assets", { recursive: true });
 cpSync("dist/index.html", indexPath);
 console.log("✅ dist → docs root copied");
+
+// Step 3b: Purge stale bundles not referenced by current index.html
+{
+  const finalHtml = readFileSync(indexPath, "utf8");
+  const referenced = new Set();
+  const jsRefRegex = /assets\/([A-Za-z0-9_\-]+\.js)/g;
+  let m;
+  while ((m = jsRefRegex.exec(finalHtml)) !== null) referenced.add(m[1]);
+  const allJs = readdirSync("assets").filter(f => f.endsWith(".js"));
+  const toDelete = allJs.filter(f => !referenced.has(f));
+  for (const f of toDelete) {
+    unlinkSync(`assets/${f}`);
+    console.log(`🗑  stale bundle 제거: ${f}`);
+  }
+  if (toDelete.length === 0) console.log("✅ stale bundle 없음");
+}
 
 // ─────────────────────────────────────────────
 // Postbuild drift guard: bundled JS must have canonical URL only
