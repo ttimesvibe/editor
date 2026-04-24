@@ -89,6 +89,17 @@ async function verifyAuth(request, env) {
 }
 
 export default {
+  // Cron Trigger → 매일 03:00 KST (= 18:00 UTC) 휴지통 30일 경과분 영구 삭제
+  // wrangler.toml 의 [triggers] crons 와 연결됨
+  async scheduled(event, env, ctx) {
+    try {
+      const result = await purgeExpiredTrash(env);
+      console.log("[cron:trash-purge]", JSON.stringify(result));
+    } catch (err) {
+      console.error("[cron:trash-purge] failed:", err?.message || err);
+    }
+  },
+
   async fetch(request, env) {
     const allowedOrigin = getAllowedOrigin(request);
     const corsHeaders = {
@@ -224,7 +235,22 @@ if (path === "/debug-location") {
     if (path === "/projects/delete" && request.method === "POST") {
       try {
         const body = await request.json();
-        return await handleProjectDelete(body, env, corsHeaders);
+        return await handleProjectDelete(body, user, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/projects/restore" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        return await handleProjectRestore(body, user, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+    if (path === "/projects/trash" && request.method === "GET") {
+      try {
+        return await handleProjectTrash(user, env, corsHeaders);
       } catch (err) {
         return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
@@ -492,6 +518,10 @@ async function handleLoadTab(id, tab, env, headers) {
 // ═══════════════════════════════════════
 
 const PROJECT_INDEX_KEY = "project_index";
+// 프로젝트당 s:<id>:<tab> KV 키 목록 (탭 전체)
+const PROJECT_TAB_KEYS = ["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"];
+// soft-delete → 영구 삭제까지 대기 기간 (30일)
+const TRASH_TTL_DAYS = 30;
 const SHOOT_INDEX_KEY = "shoot_index";
 
 async function handleProjectList(url, user, env, headers) {
@@ -668,22 +698,32 @@ async function handleProjectUpdate(body, env, headers) {
   return new Response(JSON.stringify({ success: true }), { headers });
 }
 
-async function handleProjectDelete(body, env, headers) {
+// ── 프로젝트 삭제 (soft-delete) ──
+// 탭 키(s:<id>:*, save_, auto_)는 유지한 채 project_index 엔트리에
+// deleted/deletedAt/deletedBy 플래그만 설정. 실제 삭제는 scheduled cron이
+// 30일 경과분에 대해 수행. 복구는 /projects/restore 로.
+// 참고: handleProjectList 는 deleted=true 엔트리를 목록에서 자동 제외 (line 502).
+async function handleProjectDelete(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
 
-  // 삭제 전 parentShootId 확인
   const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
   const index = raw ? JSON.parse(raw) : [];
   const target = index.find(p => p.id === id);
-  const parentShootId = target?.parentShootId || null;
+  if (!target) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
+  if (target.deleted) return new Response(JSON.stringify({ success: true, already: "deleted" }), { headers });
 
-  // project_index에서 제거
-  const filtered = index.filter(p => p.id !== id);
-  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(filtered));
+  const now = new Date().toISOString();
+  const deletedBy = user?.sub || user?.email || "unknown";
+  target.deleted = true;
+  target.deletedAt = now;
+  target.deletedBy = deletedBy;
+  target.updatedAt = now;
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
 
-  // 부모 shoot의 childProjectIds에서도 제거
+  // 부모 shoot 의 childProjectIds 에서는 분리 (삭제 대기 상태를 칸반에 노출 X)
+  const parentShootId = target.parentShootId || null;
   if (parentShootId) {
     const shootRaw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
     const shoots = shootRaw ? JSON.parse(shootRaw) : [];
@@ -692,21 +732,131 @@ async function handleProjectDelete(body, env, headers) {
       const before = parentShoot.childProjectIds.length;
       parentShoot.childProjectIds = parentShoot.childProjectIds.filter(pid => pid !== id);
       if (parentShoot.childProjectIds.length !== before) {
-        parentShoot.updatedAt = new Date().toISOString();
+        parentShoot.updatedAt = now;
         await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(shoots));
       }
     }
   }
 
-  // 관련 KV key 삭제
-  const tabs = ["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"];
-  await Promise.all(tabs.map(t => env.SESSIONS.delete(`s:${id}:${t}`)));
-  // 레거시 key도 삭제
-  await env.SESSIONS.delete(id);
-  await env.SESSIONS.delete("save_" + id);
-  await env.SESSIONS.delete("auto_" + id);
+  return new Response(JSON.stringify({
+    success: true,
+    softDeleted: true,
+    deletedAt: now,
+    willPurgeAfter: new Date(Date.parse(now) + TRASH_TTL_DAYS * 24 * 3600 * 1000).toISOString(),
+  }), { headers });
+}
 
-  return new Response(JSON.stringify({ success: true }), { headers });
+// ── 휴지통 목록 — deleted=true 프로젝트 + 남은 TTL ──
+async function handleProjectTrash(user, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  const now = Date.now();
+  const ttlMs = TRASH_TTL_DAYS * 24 * 3600 * 1000;
+  const trashed = index
+    .filter(p => p.deleted)
+    .map(p => {
+      const deletedMs = p.deletedAt ? Date.parse(p.deletedAt) : now;
+      const purgeAt = deletedMs + ttlMs;
+      return {
+        id: p.id, fn: p.fn, creator: p.creator, creatorEmail: p.creatorEmail,
+        editors: p.editors, deletedAt: p.deletedAt, deletedBy: p.deletedBy,
+        purgeAt: new Date(purgeAt).toISOString(),
+        daysLeft: Math.max(0, Math.ceil((purgeAt - now) / (24 * 3600 * 1000))),
+        parentShootId: p.parentShootId,
+      };
+    })
+    .sort((a,b) => (a.deletedAt || '').localeCompare(b.deletedAt || ''));
+  return new Response(JSON.stringify({ success: true, trash: trashed, ttlDays: TRASH_TTL_DAYS }), { headers });
+}
+
+// ── 프로젝트 복구 — deleted 플래그 해제, 탭 키는 그대로 살아있음 ──
+async function handleProjectRestore(body, user, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+  const { id } = body;
+  if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
+
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+  const target = index.find(p => p.id === id);
+  if (!target) return new Response(JSON.stringify({ error: "project not found" }), { status: 404, headers });
+  if (!target.deleted) return new Response(JSON.stringify({ success: true, already: "active" }), { headers });
+
+  delete target.deleted;
+  delete target.deletedAt;
+  delete target.deletedBy;
+  target.updatedAt = new Date().toISOString();
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+
+  // 부모 shoot 의 childProjectIds 에 다시 추가 (중복 방지)
+  if (target.parentShootId) {
+    const shootRaw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
+    const shoots = shootRaw ? JSON.parse(shootRaw) : [];
+    const parentShoot = shoots.find(s => s.id === target.parentShootId);
+    if (parentShoot) {
+      parentShoot.childProjectIds = parentShoot.childProjectIds || [];
+      if (!parentShoot.childProjectIds.includes(id)) {
+        parentShoot.childProjectIds.push(id);
+        parentShoot.updatedAt = target.updatedAt;
+        await env.SESSIONS.put(SHOOT_INDEX_KEY, JSON.stringify(shoots));
+      }
+    }
+  }
+
+  return new Response(JSON.stringify({ success: true, restored: true }), { headers });
+}
+
+// ── 30일 경과 휴지통 영구 삭제 (scheduled cron 에서 호출) ──
+// 호출 경로: ctx.waitUntil(purgeExpiredTrash(env)) from scheduled()
+// 안전 장치: deleted===true && deletedAt < cutoff 엄격 검사, 기준 시각 재계산 금지
+async function purgeExpiredTrash(env) {
+  if (!env.SESSIONS) return { skipped: "no KV binding" };
+  const cutoffMs = Date.now() - TRASH_TTL_DAYS * 24 * 3600 * 1000;
+  const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = raw ? JSON.parse(raw) : [];
+
+  const expired = index.filter(p => {
+    if (p.deleted !== true) return false;
+    const da = p.deletedAt ? Date.parse(p.deletedAt) : NaN;
+    if (!Number.isFinite(da)) return false;
+    return da < cutoffMs;
+  });
+  if (expired.length === 0) return { purged: 0, scannedAt: new Date().toISOString() };
+
+  const deletedKeys = [];
+  for (const p of expired) {
+    // 탭 키 삭제
+    for (const tab of PROJECT_TAB_KEYS) {
+      await env.SESSIONS.delete(`s:${p.id}:${tab}`);
+      deletedKeys.push(`s:${p.id}:${tab}`);
+    }
+    // 레거시 key
+    await env.SESSIONS.delete(p.id); deletedKeys.push(p.id);
+    await env.SESSIONS.delete(`save_${p.id}`); deletedKeys.push(`save_${p.id}`);
+    await env.SESSIONS.delete(`auto_${p.id}`); deletedKeys.push(`auto_${p.id}`);
+    // s:<id>:img:* 같은 동적 키 정리 (list 로 훑어 삭제)
+    let cursor = undefined;
+    do {
+      const list = await env.SESSIONS.list({ prefix: `s:${p.id}:`, cursor, limit: 1000 });
+      for (const k of list.keys) {
+        await env.SESSIONS.delete(k.name);
+        deletedKeys.push(k.name);
+      }
+      cursor = list.list_complete ? undefined : list.cursor;
+    } while (cursor);
+  }
+
+  // project_index 에서 만료 엔트리 제거
+  const expiredIds = new Set(expired.map(p => p.id));
+  const remaining = index.filter(p => !expiredIds.has(p.id));
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(remaining));
+
+  return {
+    purged: expired.length,
+    purgedProjects: expired.map(p => ({ id: p.id, fn: p.fn, deletedAt: p.deletedAt, deletedBy: p.deletedBy })),
+    deletedKeyCount: deletedKeys.length,
+    scannedAt: new Date().toISOString(),
+  };
 }
 
 async function handleProjectUpdateStep(body, env, headers) {
