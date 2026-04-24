@@ -237,6 +237,14 @@ if (path === "/debug-location") {
         return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
       }
     }
+    if (path === "/projects/rebuild-index" && request.method === "POST") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        return await handleProjectRebuildIndex(body, user, env, corsHeaders);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+      }
+    }
     // ── 촬영(칸반) 관리 ──
     if (path === "/shoots" && request.method === "GET") {
       return await handleShootList(url, user, env, corsHeaders);
@@ -489,7 +497,9 @@ const SHOOT_INDEX_KEY = "shoot_index";
 async function handleProjectList(url, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const raw = await env.SESSIONS.get(PROJECT_INDEX_KEY);
-  const all = raw ? JSON.parse(raw) : [];
+  const allRaw = raw ? JSON.parse(raw) : [];
+  // soft-delete 된 엔트리는 목록/카운트 모두에서 제외
+  const all = allRaw.filter(p => !p.deleted);
 
   const filter = url.searchParams.get("filter") || "all";
   const search = url.searchParams.get("search") || "";
@@ -734,6 +744,88 @@ async function handleProjectUpdateStep(body, env, headers) {
   }
 
   return new Response(JSON.stringify({ success: true }), { headers });
+}
+
+// /projects/rebuild-index — s:*:meta 키들로부터 project_index 재구축 (복구용)
+// project_index에 누락된 session을 찾아 기본값으로 추가. 기존 엔트리는 보존.
+async function handleProjectRebuildIndex(body, user, env, headers) {
+  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
+
+  // 1) 현재 project_index 읽기 (없으면 [])
+  const rawIdx = await env.SESSIONS.get(PROJECT_INDEX_KEY);
+  const index = rawIdx ? JSON.parse(rawIdx) : [];
+  const existingIds = new Set(index.map(p => p.id));
+
+  // 2) s:*:meta 키 전부 나열 (cursor 페이징)
+  const metaKeys = [];
+  let cursor = undefined;
+  do {
+    const list = await env.SESSIONS.list({ prefix: "s:", cursor, limit: 1000 });
+    for (const k of list.keys) {
+      if (k.name.endsWith(":meta")) metaKeys.push(k.name);
+    }
+    cursor = list.list_complete ? undefined : list.cursor;
+  } while (cursor);
+
+  // 3) 각 meta를 읽어 누락된 세션 복구
+  const restored = [];
+  const failed = [];
+  for (const key of metaKeys) {
+    const id = key.slice(2, -5); // "s:" ... ":meta"
+    if (existingIds.has(id)) continue;
+    try {
+      const metaRaw = await env.SESSIONS.get(key);
+      if (!metaRaw) continue;
+      const meta = JSON.parse(metaRaw);
+
+      // stages → currentStep / stepProgress 추론
+      const stageOrder = ["manuscript", "correction", "review", "guide", "highlight", "visual", "setgen", "modify"];
+      const stages = meta.stages || {};
+      const stepProgress = stageOrder.map(s => stages[s]?.status === "완료");
+      // 마지막 완료된 단계의 다음 단계를 currentStep으로
+      let currentStep = "review";
+      for (let i = stageOrder.length - 1; i >= 0; i--) {
+        if (stages[stageOrder[i]]?.status === "완료") {
+          currentStep = stageOrder[Math.min(i + 1, stageOrder.length - 1)];
+          break;
+        }
+      }
+
+      const restoredProject = {
+        id,
+        fn: meta.fn || "(복구됨) 제목 없음",
+        creator: user?.name || "복구",
+        creatorEmail: user?.sub || "",
+        editors: user?.sub ? [{ email: user.sub, name: user.name || user.sub }] : [],
+        status: "active",
+        currentStep,
+        stepProgress,
+        memo: "[자동 복구됨 — project_index 재구축]",
+        parentShootId: null,
+        createdAt: meta.createdAt || new Date().toISOString(),
+        updatedAt: meta.updatedAt || new Date().toISOString(),
+        restoredAt: new Date().toISOString(),
+      };
+      index.push(restoredProject);
+      restored.push({ id, fn: restoredProject.fn });
+    } catch (e) {
+      failed.push({ key, error: e.message });
+    }
+  }
+
+  // 4) updatedAt 내림차순 정렬 후 저장
+  index.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+
+  return new Response(JSON.stringify({
+    success: true,
+    scanned: metaKeys.length,
+    existing: existingIds.size,
+    restoredCount: restored.length,
+    restored,
+    failed,
+    totalAfter: index.length,
+  }), { headers });
 }
 
 async function handleTeamMembers(env, headers) {
