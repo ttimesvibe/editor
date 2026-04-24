@@ -11,10 +11,9 @@ account_id = "d556c524bda75cc7c5b5f13b6433ede7"
 binding = "SESSIONS"
 id = "2892f3a4de90429dbcf0eb272578009e"   # editor-session
 
-# Cron Trigger — 휴지통 30일 경과 프로젝트 영구 삭제
-# 매일 18:00 UTC = 03:00 KST. scheduled() 핸들러가 purgeExpiredTrash() 호출.
-[triggers]
-crons = ["0 18 * * *"]
+# Cron Trigger 없음 — 영구 삭제는 자동화하지 않음.
+# 관리자가 주기적으로 /projects/trash 확인 후 /projects/trash/purge 로 일괄 처리.
+# KV 용량 소진까지 여유 충분하다는 판단.
 
 # Secrets (wrangler secret put 으로 설정):
 # - OPENAI_API_KEY
