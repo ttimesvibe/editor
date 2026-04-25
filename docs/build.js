@@ -10,9 +10,11 @@ const indexPath = "index.html";
 // Canonical prod worker URL — single source of truth for drift detection
 const CANONICAL_WORKER_URL = "https://alleditor.ttimes6000.workers.dev";
 // Any previously-used URL that must NEVER appear in shipped bundles
+// 번들에 절대 들어가면 안 되는 URL (TEST 로의 역방향 drift 방지)
 const FORBIDDEN_WORKER_URLS = [
-  "https://ttimes-editor.ttimes6000.workers.dev",
-  "https://editor.ttimes6000.workers.dev",
+  "https://editor.ttimes.workers.dev",              // 실제 TEST worker URL — PROD 가 잘못 호출하면 KV 섞임
+  "https://ttimes-editor.ttimes6000.workers.dev",   // 가상 변형 (방어용)
+  "https://editor.ttimes6000.workers.dev",          // 가상 변형 (방어용)
 ];
 
 // ─────────────────────────────────────────────
