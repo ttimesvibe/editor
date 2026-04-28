@@ -4,6 +4,18 @@
 
 import JSZip from "jszip";
 
+// w:strike / w:dstrike 검출 — Word XML에서 strike는 다양한 형태로 나타남:
+//   <w:strike/>                  (가장 단순)
+//   <w:strike />                 (공백 포함)
+//   <w:strike w:val="true"/>     (명시적 true)
+//   <w:strike w:val="1"/>        (1=true) ← 실제 워드 저장 시 가장 흔한 형태
+//   <w:strike w:val="false"/>    (false → 정작 strike OFF, 매칭 제외)
+//   <w:strike w:val="0"/>        (0=false → 매칭 제외)
+//   <w:strike></w:strike>        (드물지만 가능)
+// 기존 정규식 /<w:strike\/>/ 은 단순 self-closing 만 매칭해 90% 누락 가능 (실측).
+// → val=false/0 만 negative lookahead 로 제외하고 그 외 모든 형태 검출.
+export const STRIKE_DETECT_RE = /<w:(?:strike|dstrike)(?:\s+w:val="(?!(?:false|0)")[^"]*")?\s*\/>|<w:(?:strike|dstrike)(?:\s+w:val="(?!(?:false|0)")[^"]*")?\s*><\/w:(?:strike|dstrike)>/;
+
 // Word "검토 모드" 변경 추적 — 삭제된 텍스트(w:del)를 마커로 표시하여 추출
 export async function parseDocxWithTrackChanges(arrayBuffer) {
   const zip = await JSZip.loadAsync(arrayBuffer);
@@ -61,7 +73,8 @@ export function parseBodyXml(bodyXml) {
       } else if (tMatch[3] !== undefined) {
         const runContent = tMatch[3];
         const runText = extractTextFromRun(runContent);
-        const isStrike = /<w:strike\/>/.test(runContent);
+        // 견고화된 strike 검출 (속성 포함 형태도 매칭)
+        const isStrike = STRIKE_DETECT_RE.test(runContent);
         if (runText) segments.push({ text: runText, deleted: isStrike });
       }
     }

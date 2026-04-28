@@ -107,6 +107,61 @@ test("일반 <w:r> + <w:strike/> 는 삭제로 표시", () => {
   assert.equal(paragraphs[0][1].deleted, false);
 });
 
+// ═══════════════════════════════════════════════
+// strike 변형 회귀 방지 — 2026-04-28 조용민01.docx 사례
+// 원본 docx 에서 `<w:strike w:val="1"/>` 형태가 압도적으로 많은데 (90%+),
+// 단순 정규식 /<w:strike\/>/ 만 쓰면 90% 누락. 다양한 변형 모두 검출되어야 함.
+// ═══════════════════════════════════════════════
+test("strike 변형: <w:strike w:val=\"1\"/> 도 삭제로 표시", () => {
+  const body = para(
+    `<w:r w:rsidRPr="ABC"><w:rPr><w:strike w:val="1"/></w:rPr><w:t>속성포함취소선</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].text, "속성포함취소선");
+  assert.equal(paragraphs[0][0].deleted, true);
+});
+
+test("strike 변형: <w:strike w:val=\"true\"/> 도 삭제로 표시", () => {
+  const body = para(
+    `<w:r><w:rPr><w:strike w:val="true"/></w:rPr><w:t>true취소선</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].deleted, true);
+});
+
+test("strike 변형: <w:strike w:val=\"false\"/> 는 삭제 아님 (off 표시)", () => {
+  // val=false/0 은 strike 가 명시적으로 OFF 라는 의미. 보존해야 함.
+  const body = para(
+    `<w:r><w:rPr><w:strike w:val="false"/></w:rPr><w:t>OFF로지정된텍스트</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].deleted, false);
+});
+
+test("strike 변형: <w:strike w:val=\"0\"/> 는 삭제 아님 (off 표시)", () => {
+  const body = para(
+    `<w:r><w:rPr><w:strike w:val="0"/></w:rPr><w:t>0으로지정된텍스트</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].deleted, false);
+});
+
+test("strike 변형: <w:dstrike/> (이중 취소선) 도 삭제로 표시", () => {
+  const body = para(
+    `<w:r><w:rPr><w:dstrike/></w:rPr><w:t>이중취소선</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].deleted, true);
+});
+
+test("strike 변형: <w:strike /> (공백 포함) 도 삭제로 표시", () => {
+  const body = para(
+    `<w:r><w:rPr><w:strike /></w:rPr><w:t>공백포함취소선</w:t></w:r>`,
+  );
+  const paragraphs = parseBodyXml(body);
+  assert.equal(paragraphs[0][0].deleted, true);
+});
+
 test("self-closing 과 paired 가 섞여도 정확한 segment 순서·삭제 flag", () => {
   // 실제 docx 에서 관찰된 패턴: 단락 마크 삭제 표시와 인라인 삭제가 혼재
   const body = para(
