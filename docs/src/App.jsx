@@ -1736,6 +1736,21 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
               letterSpacing:"0.08em",borderBottom:`1px solid ${C.bd}`,position:"sticky",top:0,background:C.bg,zIndex:2,
               display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>교정본</span>
+              {/* 텍스트 선택 시 자막 생성 바 — 본문 가림 방지 위해 sticky 헤더에 inline */}
+              {selPopup && <div style={{display:"flex",gap:6,alignItems:"center",
+                background:C.sf,border:`1px solid ${C.ac}`,borderRadius:8,padding:"3px 8px",
+                boxShadow:`0 2px 8px ${C.ac}33`}}>
+                <button onClick={()=>handlePartialGenerate(selPopup.blockIdx, selPopup.text)}
+                  disabled={partialBusy}
+                  title={`선택: "${selPopup.text.slice(0,60)}${selPopup.text.length>60?'…':''}"`}
+                  style={{padding:"4px 10px",borderRadius:5,border:"none",letterSpacing:0,
+                    background:`linear-gradient(135deg,${C.ac},#7C3AED)`,color:"#fff",fontSize:11,fontWeight:700,
+                    textTransform:"none",cursor:partialBusy?"wait":"pointer",opacity:partialBusy?0.6:1}}>
+                  {partialBusy ? "⏳ 생성 중..." : "✨ 이 구간으로 자막 생성"}
+                </button>
+                <button onClick={()=>setSelPopup(null)}
+                  style={{background:"none",border:"none",color:C.txD,cursor:"pointer",fontSize:13,padding:"0 4px"}}>✕</button>
+              </div>}
               <div style={{display:"flex",alignItems:"center",gap:6}}>
                 {bookmark != null && <button onClick={()=>{
                   const el = bEls.current[`g${bookmark}`];
@@ -1794,11 +1809,12 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
                 <span style={{fontSize:11,fontWeight:700,color:"#F59E0B"}}>📌 책갈피 — 여기까지 확인함</span>
               </div>}
               <div ref={el=>{if(el)bEls.current[`g${idx}`]=el}} onClick={()=>scrollTo(idx)}
-                onMouseUp={(e)=>{
+                onMouseUp={()=>{
+                  // 좌표는 더 이상 필요 없음 — 헤더/푸터 sticky 바에 inline 표시
                   const sel = window.getSelection();
                   const txt = sel?.toString()?.trim();
                   if (txt && txt.length >= 5) {
-                    setSelPopup({ blockIdx: idx, text: txt, x: e.clientX, y: e.clientY });
+                    setSelPopup({ blockIdx: idx, text: txt });
                   }
                 }}
                 style={{padding:"10px 16px",
@@ -1973,20 +1989,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
                 </div>
               )}
             </div>})}
-          {/* 텍스트 선택 팝업 */}
-          {selPopup && <div style={{position:"fixed",left:selPopup.x-60,top:selPopup.y-50,zIndex:100,
-            background:C.sf,border:`2px solid ${C.ac}`,borderRadius:10,padding:"8px 12px",
-            boxShadow:"0 6px 20px rgba(0,0,0,0.4)",display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={()=>handlePartialGenerate(selPopup.blockIdx, selPopup.text)}
-              disabled={partialBusy}
-              style={{padding:"6px 14px",borderRadius:6,border:"none",
-                background:`linear-gradient(135deg,${C.ac},#7C3AED)`,color:"#fff",fontSize:12,fontWeight:700,
-                cursor:partialBusy?"wait":"pointer",opacity:partialBusy?0.6:1}}>
-              {partialBusy ? "⏳ 생성 중..." : "✨ 이 구간으로 자막 생성"}
-            </button>
-            <button onClick={()=>setSelPopup(null)}
-              style={{background:"none",border:"none",color:C.txD,cursor:"pointer",fontSize:14}}>✕</button>
-          </div>}
+          {/* 텍스트 선택 popup 은 floating 대신 sticky 헤더/푸터 inline 으로 표시 (본문 가림 방지) */}
           {partialBusy && <div style={{padding:"8px 16px",background:"rgba(74,108,247,0.1)",
             borderTop:`1px solid ${C.ac}`,fontSize:12,color:C.ac,textAlign:"center"}}>
             ⏳ 부분 강조자막 생성 중...
@@ -2085,6 +2088,21 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
               </span>
             </>;
           })()}
+          {/* 텍스트 선택 시 자막 생성 바 — 헤더와 쌍, 푸터 우측 */}
+          {selPopup && <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center",
+            background:C.bg,border:`1px solid ${C.ac}`,borderRadius:8,padding:"3px 8px",
+            boxShadow:`0 2px 8px ${C.ac}33`}}>
+            <button onClick={()=>handlePartialGenerate(selPopup.blockIdx, selPopup.text)}
+              disabled={partialBusy}
+              title={`선택: "${selPopup.text.slice(0,60)}${selPopup.text.length>60?'…':''}"`}
+              style={{padding:"4px 10px",borderRadius:5,border:"none",
+                background:`linear-gradient(135deg,${C.ac},#7C3AED)`,color:"#fff",fontSize:11,fontWeight:700,
+                cursor:partialBusy?"wait":"pointer",opacity:partialBusy?0.6:1}}>
+              {partialBusy ? "⏳ 생성 중..." : "✨ 이 구간으로 자막 생성"}
+            </button>
+            <button onClick={()=>setSelPopup(null)}
+              style={{background:"none",border:"none",color:C.txD,cursor:"pointer",fontSize:13,padding:"0 4px"}}>✕</button>
+          </div>}
         </div>}
       </>}
 
