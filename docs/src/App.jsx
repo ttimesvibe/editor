@@ -568,50 +568,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       } finally {
         savingInProgress.current = false;
       }
-    }, 30 * 1000); // 30초 (이전 3분 → 데이터 유실 위험 줄이기 위해 단축)
+    }, 3 * 60 * 1000); // 3분
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, lastSavedSnapshot, cfg]);
-
-  // ── pagehide/beforeunload 강제 flush (브라우저 닫기·탭 닫기·새로고침 시 마지막 저장) ──
-  // 3분→30초 단축으로 평상시 유실은 줄였지만, 마지막 30초 작업분 + visibilitychange 백그라운드
-  // 케이스를 보호. ModifyTab.jsx 의 검증된 keepalive 패턴 채용.
-  useEffect(() => {
-    if (cfg.apiMode === "mock" || !cfg.workerUrl) return;
-    const handleUnload = () => {
-      const dirty = dirtyTabs.current;
-      if (!dirty || dirty.size === 0) return;
-      const id = sessionIdRef.current;
-      if (!id) return;
-      const token = localStorage.getItem("ttimes_token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const flush = (tab, data) => {
-        try {
-          fetch(`${cfg.workerUrl}/save`, {
-            method: "POST",
-            keepalive: true,                     // ← 핵심: 페이지 unload 후에도 fetch 완주
-            headers,
-            body: JSON.stringify({ id, tab, data, fn }),
-          }).catch(() => {});
-        } catch {}
-      };
-      if (dirty.has("correction")) flush("correction", { blocks, anal, diffs, scriptEdits, blockDeletions });
-      if (dirty.has("guide"))      flush("guide",      { hl, hlStats, hlVerdicts, hlEdits, hlMarkers });
-      if (dirty.has("review"))     flush("review",     reviewData || {});
-      if (dirty.has("highlight") && exportCache.highlight) flush("highlight", exportCache.highlight);
-    };
-    window.addEventListener("pagehide", handleUnload);
-    window.addEventListener("beforeunload", handleUnload);
-    // 백그라운드 탭 전환도 감지 (Chrome 탭 suspension 으로 주기 저장 fetch 가 ERR_NETWORK_IO_SUSPENDED 나는 케이스 보호)
-    const onVisibility = () => { if (document.visibilityState === "hidden") handleUnload(); };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("pagehide", handleUnload);
-      window.removeEventListener("beforeunload", handleUnload);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [cfg, blocks, anal, diffs, scriptEdits, blockDeletions, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, reviewData, exportCache, fn]);
 
   const handleShare = useCallback(async () => {
     if (savingInProgress.current) return; // 자동저장과 충돌 방지
