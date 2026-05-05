@@ -8,7 +8,7 @@
     "test": "node --test src/utils/*.test.js"
   },
   "dependencies": {
-    "dompurify": "^3.2.4",
+    "dompurify": "^3.4.2",
     "jszip": "^3.10.1",
     "mammoth": "^1.8.0",
     "react": "^18.3.1",
