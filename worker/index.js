@@ -553,19 +553,22 @@ async function handleSaveLegacy(body, env, headers) {
   const id = body.id || Array.from(crypto.getRandomValues(new Uint8Array(5))).map(b => b.toString(36)).join("").slice(0, 8);
   const { id: _discardId, ...dataWithoutId } = body;
   const savedAt = new Date().toISOString();
-  await env.SESSIONS.put("save_" + id, JSON.stringify({ ...dataWithoutId, savedAt }), { expirationTtl: 60*60*24*365 });
+  // CMS v2 — 입력 검증 + sanitize (E4 미해당, E5 적용 + B12)
+  if (body.id && !VALID_ID_RE.test(body.id)) {
+    return new Response(JSON.stringify({ error: "invalid session id format" }), { status: 400, headers });
+  }
+  const cleanData = sanitizePayload(dataWithoutId);
+  await env.SESSIONS.put("save_" + id, JSON.stringify({ ...cleanData, savedAt }), { expirationTtl: 60*60*24*365 });
 
-  try {
-    const indexData = await env.SESSIONS.get("session_index");
-    const index = indexData ? JSON.parse(indexData) : [];
-    const existing = index.findIndex(s => s.id === id);
-    const entry = { id, fn: body.fn || "제목 없음", savedAt, blockCount: body.blocks?.length || 0, hasGuide: (body.hl?.length || 0) > 0 };
-    if (existing >= 0) index[existing] = entry;
-    else index.unshift(entry);
-    await env.SESSIONS.put("session_index", JSON.stringify(index.slice(0, 200)));
-  } catch (e) { console.error("[kv-index] session_index update failed (legacy):", e.message); }
+  // CMS v2 — D6-7: array_id_union read-after-write
+  const entry = { id, fn: body.fn || "제목 없음", savedAt, blockCount: body.blocks?.length || 0, hasGuide: (body.hl?.length || 0) > 0, schema: "v1-legacy" };
+  const idxResult = await updateSessionIndex(env, entry);
+  const warnings = idxResult.warnings || [];
 
-  return new Response(JSON.stringify({ success: true, id }), { headers });
+  // CMS v2 — 응답 표준 {success, id, savedAt, warnings?}
+  const resp = { success: true, id, savedAt };
+  if (warnings.length > 0) resp.warnings = warnings;
+  return new Response(JSON.stringify(resp), { headers });
 }
 
 // 세션 목록 조회
@@ -1397,6 +1400,8 @@ async function handleShootCreate(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const id = "shoot_" + Array.from(crypto.getRandomValues(new Uint8Array(7))).map(b => b.toString(36)).join("").slice(0, 10);
   const now = new Date().toISOString();
+  // CMS v2 — E3: 외부 호출 실패 warnings 누적
+  const _shootWarnings = [];
 
   const shoot = {
     id,
@@ -1463,6 +1468,7 @@ async function handleShootCreate(body, user, env, headers) {
       }
     } catch (calErr) {
       console.error("[apps-script] calendar event create failed:", calErr);
+      _shootWarnings.push("calendar event create failed");
     }
   }
 
@@ -1525,9 +1531,13 @@ async function handleShootCreate(body, user, env, headers) {
     }
   } catch (emailErr) {
     console.error("[apps-script] email notification failed:", emailErr);
+    _shootWarnings.push("email notification failed");
   }
 
-  return new Response(JSON.stringify({ success: true, id, shoot }), { headers });
+  // CMS v2 — 응답 표준 (외부 호출 실패 warnings 노출, E3)
+  const resp = { success: true, id, shoot };
+  if (_shootWarnings.length > 0) resp.warnings = _shootWarnings;
+  return new Response(JSON.stringify(resp), { headers });
 }
 
 async function handleShootUpdate(body, env, headers) {
