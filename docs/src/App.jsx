@@ -5,6 +5,8 @@ import * as mammoth from "mammoth";
 import { loadConfig, saveConfig } from "./utils/config.js";
 import { loadDictionary, syncDictionaryFromServer, updateDictionary } from "./utils/dictionary.js";
 import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab, apiProjectUpdateStep } from "./utils/api.js";
+import { createEmergencyBackup, getLatestBackup, listBackups, autoRetry } from "./utils/backup.js";
+import { SaveFailModal, ConflictModal, RestoreModal, BackupListModal } from "./components/v2_modals.jsx";
 import { parseDocxWithTrackChanges, computeBlockStrikes } from "./utils/docxParser.js";
 import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlocks, splitChunks, chunkToText, chunkCtx } from "./utils/lengthModel.js";
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
@@ -266,6 +268,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [bookmark, setBookmark] = useState(null); // 책갈피 블록 인덱스
   const [exportCache, setExportCache] = useState({}); // { highlight, setgen, visual, modify }
 
+  // CMS v2 — D2 모달 + 4중 백업 (묶음 ① ½)
+  const [saveFailModal, setSaveFailModal] = useState(null); // { failedTabs, sessionId, fn, payload, onRetry }
+  const [conflictModal, setConflictModal] = useState(null); // { tab, serverUpdatedBy, ... }
+  const [restoreModal, setRestoreModal] = useState(null);   // { backup, totalCount }
+  const [backupListOpen, setBackupListOpen] = useState(false);
+  const autoSaveFailCount = useRef(0); // 자동저장 누적 실패 (3회 시 토스트)
+
   const lRef = useRef(null), rRef = useRef(null), syncing = useRef(false), bEls = useRef({});
   const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
   const isInitialLoad = useRef(true); // 초기 로드 중에는 dirty 마킹 안 함
@@ -277,6 +286,33 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark, exportCache }));
     } catch {}
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark]);
+
+  // CMS v2 — beforeunload 가드 (D2 1차 백업, 묶음 ① ½)
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      // dirty 가 있고 저장 진행 중이 아닐 때만 경고
+      if (dirtyTabs.current.size > 0 && !savingInProgress.current) {
+        e.preventDefault();
+        e.returnValue = "저장되지 않은 변경사항이 있습니다. 정말 떠나시겠습니까?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
+  // CMS v2 — 진입 시 복원 모달 (D2 — 다음 로그인 즉시)
+  useEffect(() => {
+    try {
+      const latest = getLatestBackup();
+      if (latest && latest.sessionId) {
+        const all = listBackups();
+        setRestoreModal({ backup: latest, totalCount: all.length });
+      }
+    } catch (e) {
+      console.warn("[backup] restore check failed:", e?.message || e);
+    }
+  }, []);
 
   // ── 앱 마운트 시: URL 공유 파라미터 또는 localStorage 복원 ──
   useEffect(() => {
@@ -478,30 +514,110 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // 저장 & 공유
   // ── dirty 탭만 KV 저장 (변경된 탭만 개별 저장) ──
   // overrides: { correction: {...}, guide: {...} } — setState 직후 클로저가 stale할 때 최신 데이터 주입용
-  const saveDirtyTabsToKV = useCallback(async (id, overrides = {}) => {
+  // CMS v2 — D2 + B3 (묶음 ① ½)
+  // opts.manual : 수동 저장 (실패 시 모달 노출)
+  // opts.silent : 자동 저장 (silent fail, 3회 누적 시 토스트만)
+  const saveDirtyTabsToKV = useCallback(async (id, overrides = {}, opts = {}) => {
     if (!id || cfg.apiMode === "mock") return;
     const dirty = dirtyTabs.current;
     if (dirty.size === 0) return;
+    const tabsToSave = [];
+    const payloads = {};
     const saves = [];
     if (dirty.has("correction")) {
       const d = overrides.correction || { blocks, anal, diffs, scriptEdits, blockDeletions };
+      payloads.correction = d; tabsToSave.push("correction");
       saves.push(apiSaveTab(id, "correction", d, cfg, fn));
     }
     if (dirty.has("review")) {
-      saves.push(apiSaveTab(id, "review", overrides.review || reviewData || {}, cfg, fn));
+      const d = overrides.review || reviewData || {};
+      payloads.review = d; tabsToSave.push("review");
+      saves.push(apiSaveTab(id, "review", d, cfg, fn));
     }
     if (dirty.has("guide")) {
       const d = overrides.guide || { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
+      payloads.guide = d; tabsToSave.push("guide");
       saves.push(apiSaveTab(id, "guide", d, cfg, fn));
     }
     if (dirty.has("highlight")) {
       const d = overrides.highlight || exportCache.highlight;
-      if (d) saves.push(apiSaveTab(id, "highlight", d, cfg, fn));
+      if (d) {
+        payloads.highlight = d; tabsToSave.push("highlight");
+        saves.push(apiSaveTab(id, "highlight", d, cfg, fn));
+      }
     }
-    if (saves.length > 0) await Promise.all(saves);
-    const savedTabs = [...dirty];
-    dirtyTabs.current = new Set();
-    console.log(`💾 저장 완료: [${savedTabs.join(", ")}]`);
+    if (saves.length === 0) return;
+
+    // Promise.allSettled — 결과 분류
+    const results = await Promise.allSettled(saves);
+    const failed = [];
+    const conflicts = [];
+    const success = [];
+    results.forEach((r, i) => {
+      const t = tabsToSave[i];
+      if (r.status === "fulfilled") success.push(t);
+      else if (r.reason?.status === 409) conflicts.push({ tab: t, payload: payloads[t], reason: r.reason });
+      else failed.push({ tab: t, error: r.reason, payload: payloads[t] });
+    });
+
+    // dirty 보존 — 성공한 탭만 해제
+    const successSet = new Set(success);
+    const remaining = new Set([...dirty].filter((t) => !successSet.has(t)));
+    dirtyTabs.current = remaining;
+
+    if (success.length > 0) console.log(`[save-flow] saved: [${success.join(", ")}]`);
+
+    // 실패 처리
+    if (failed.length > 0) {
+      // 2차 백업 (localStorage 자동) — 모달 노출 전 즉시
+      for (const f of failed) {
+        createEmergencyBackup({ type: "save_failure", sessionId: id, fn, payload: f.payload, reason: f.error?.message || "save failed" });
+      }
+      if (opts.manual) {
+        // 수동 저장 → 모달
+        setSaveFailModal({
+          failedTabs: failed.map((f) => ({ tab: f.tab, error: f.error })),
+          sessionId: id, fn, payload: payloads,
+          onRetry: () => { setSaveFailModal(null); saveDirtyTabsToKV(id, overrides, { manual: true }); },
+          onClose: () => setSaveFailModal(null),
+        });
+      } else if (!opts.silent) {
+        // 기본: 토스트
+        autoSaveFailCount.current += 1;
+        if (autoSaveFailCount.current >= 3) {
+          console.warn("[save-flow] auto-save failed 3 times in a row");
+          setErr("자동 저장이 3회 연속 실패했습니다. '공유' 버튼으로 수동 저장을 시도해주세요.");
+          autoSaveFailCount.current = 0;
+        }
+      }
+    } else {
+      autoSaveFailCount.current = 0;
+    }
+
+    // 충돌 처리 (B3)
+    if (conflicts.length > 0) {
+      // 백업 자동 (D2 2차 + B3 통합)
+      for (const c of conflicts) {
+        createEmergencyBackup({ type: "conflict", sessionId: id, fn, payload: c.payload, reason: "conflict 409" });
+      }
+      // 첫 충돌만 모달 (다중 충돌 시 한 번에 한 탭)
+      const c = conflicts[0];
+      setConflictModal({
+        tab: c.tab,
+        serverUpdatedBy: c.reason?.serverUpdatedBy,
+        onMerge: () => { setConflictModal(null); /* TODO 묶음 ⑥ 시점에 clientMergeTabData + 강제 저장 */ },
+        onAcceptServer: () => { setConflictModal(null); /* TODO reload */ },
+        onForceMine: () => { setConflictModal(null); /* TODO force flag 저장 */ },
+        onClose: () => setConflictModal(null),
+      });
+    }
+
+    // 호출자에게 결과 throw (handleShare 등이 catch)
+    if (failed.length > 0 || conflicts.length > 0) {
+      const err = new Error(`save partial: ${failed.length} failed, ${conflicts.length} conflicts`);
+      err.failed = failed; err.conflicts = conflicts;
+      throw err;
+    }
   }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, cfg, fn]);
 
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
@@ -568,10 +684,35 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       } finally {
         savingInProgress.current = false;
       }
-    }, 3 * 60 * 1000); // 3분
+    }, 30 * 1000); // CMS v2: 30초 (묶음 ② A-1, 3분 → 30초)
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, lastSavedSnapshot, cfg]);
+
+  // CMS v2 — pagehide sendBeacon (묶음 ② A-2, TAB-MOD-01 모범 차용)
+  useEffect(() => {
+    const onPageHide = () => {
+      const id = sessionIdRef.current;
+      if (!id || dirtyTabs.current.size === 0 || cfg.apiMode === "mock" || !cfg.workerUrl) return;
+      try {
+        // dirty 탭 모두 sendBeacon (비동기 / 보장 발사)
+        const payloads = {};
+        if (dirtyTabs.current.has("correction")) payloads.correction = { blocks, anal, diffs, scriptEdits, blockDeletions };
+        if (dirtyTabs.current.has("review")) payloads.review = reviewData || {};
+        if (dirtyTabs.current.has("guide")) payloads.guide = { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
+        if (dirtyTabs.current.has("highlight") && exportCache.highlight) payloads.highlight = exportCache.highlight;
+        for (const [tab, data] of Object.entries(payloads)) {
+          const body = JSON.stringify({ id, tab, data, fn });
+          const blob = new Blob([body], { type: "application/json" });
+          navigator.sendBeacon(`${cfg.workerUrl}/save`, blob);
+        }
+      } catch (e) {
+        console.warn("[save-flow] pagehide flush failed:", e?.message || e);
+      }
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, fn, cfg]);
 
   const handleShare = useCallback(async () => {
     if (savingInProgress.current) return; // 자동저장과 충돌 방지
@@ -580,13 +721,16 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     try {
       const id = sessionIdRef.current;
       if (!id) { setErr("프로젝트 ID가 없습니다. 대시보드에서 프로젝트를 선택해주세요."); return; }
-      // 변경된 탭만 저장
-      await saveDirtyTabsToKV(id);
+      // 변경된 탭만 저장 (manual=true → 실패 시 SaveFailModal 자동 트리거)
+      await saveDirtyTabsToKV(id, {}, { manual: true });
       const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
       setShareUrl(url);
       setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
       if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
-    } catch (e) { setErr(e.message); }
+    } catch (e) {
+      // saveDirtyTabsToKV 가 모달을 이미 띄움 — 추가 setErr 안 함 (중복 알림 방지)
+      if (!e.failed && !e.conflicts) setErr(e.message);
+    }
     finally { setSaving(false); savingInProgress.current = false; }
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveDirtyTabsToKV]);
 
@@ -2214,5 +2358,47 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       
       body{overflow:hidden}
     `}</style>
+    {/* CMS v2 — D2/B3 모달 (묶음 ① ½) */}
+    {saveFailModal && <SaveFailModal {...saveFailModal} />}
+    {conflictModal && <ConflictModal {...conflictModal} />}
+    {restoreModal && <RestoreModal
+      backup={restoreModal.backup}
+      totalCount={restoreModal.totalCount}
+      onRestore={() => {
+        try {
+          const data = restoreModal.backup.data || {};
+          if (data.blocks) setBlocks(data.blocks);
+          if (data.anal) setAnal(data.anal);
+          if (data.diffs) setDiffs(data.diffs);
+          if (data.hl) setHl(data.hl);
+          if (data.hlStats) setHlStats(data.hlStats);
+          if (data.hlVerdicts) setHlVerdicts(data.hlVerdicts);
+          if (data.hlEdits) setHlEdits(data.hlEdits);
+          if (data.hlMarkers) setHlMarkers(data.hlMarkers);
+          if (data.scriptEdits) setScriptEdits(data.scriptEdits);
+          if (data.blockDeletions) setBlockDeletions(data.blockDeletions);
+          if (data.reviewData) setReviewData(data.reviewData);
+          if (restoreModal.backup.fn) setFn(restoreModal.backup.fn);
+          if (restoreModal.backup.sessionId) {
+            setSessionId(restoreModal.backup.sessionId);
+            sessionIdRef.current = restoreModal.backup.sessionId;
+          }
+          setRestoreModal(null);
+        } catch (e) {
+          console.error("[backup] restore failed:", e?.message || e);
+          setErr("복원에 실패했습니다. 백업 목록에서 다운로드하여 수동 복원해주세요.");
+        }
+      }}
+      onSkip={() => setRestoreModal(null)}
+      onShowList={() => { setRestoreModal(null); setBackupListOpen(true); }}
+    />}
+    {backupListOpen && <BackupListModal
+      onSelect={(b) => {
+        // 선택된 백업으로 복원
+        setRestoreModal({ backup: b, totalCount: 1 });
+        setBackupListOpen(false);
+      }}
+      onClose={() => setBackupListOpen(false)}
+    />}
   </div>;
 }

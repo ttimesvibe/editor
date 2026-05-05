@@ -1,6 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { C, FN } from "../utils/styles.js";
 import { apiHlRecommend } from "../utils/api.js";
+import DOMPurify from "dompurify";
+
+// CMS v2 — XSS 방어 (PS10, S-1, 묶음 ⑩)
+const SANITIZE_OPTS = {
+  ALLOWED_TAGS: ["mark", "span", "b", "i", "br"],
+  ALLOWED_ATTR: ["style", "title", "data-blockid"],
+};
 
 const CPS = 9.0; // ttimes 학습 데이터 기준 542.7자/분
 
@@ -209,7 +216,7 @@ export function HighlightTab({ script, blocks, sessionId, config, onSave, curren
           <div style={{fontSize:11,color:isHost?C.txD:C.txM,marginBottom:4,fontWeight:600}}>
             {block.speaker} <span style={{fontWeight:400}}>{block.time || block.timestamp || ""}</span>
           </div>
-          <div style={{fontSize:14,lineHeight:1.8,color:isHost?C.txM:C.tx}} dangerouslySetInnerHTML={{__html: renderBlock(block)}}/>
+          <div style={{fontSize:14,lineHeight:1.8,color:isHost?C.txM:C.tx}} dangerouslySetInnerHTML={{__html: DOMPurify.sanitize(renderBlock(block), SANITIZE_OPTS)}}/>
         </div>;
       })}
     </div>

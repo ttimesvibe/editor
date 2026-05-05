@@ -1,0 +1,41 @@
+#!/bin/sh
+# CMS v2 — drift guard pre-push hook (묶음 ①)
+# 활성화: git config core.hooksPath .githooks
+# 본 hook 은 push 전 forbidden URL 이 staged/committed 코드에 잔존하는지 grep 차단.
+
+set -e
+
+FORBIDDEN=(
+  "https://editor.ttimes.workers.dev"
+  "https://ttimes-editor.ttimes6000.workers.dev"
+  "https://editor.ttimes6000.workers.dev"
+)
+
+CANONICAL="https://alleditor.ttimes6000.workers.dev"
+
+# docs/assets/ + docs/src/ + worker/ 전체 검사
+PATHS="docs/assets docs/src worker"
+
+found=0
+for bad in "${FORBIDDEN[@]}"; do
+  if git grep -qF "$bad" -- $PATHS 2>/dev/null; then
+    echo "❌ pre-push: forbidden URL detected — $bad" >&2
+    git grep -nF "$bad" -- $PATHS >&2 || true
+    found=1
+  fi
+done
+
+# canonical 존재 확인 (config.js)
+if ! git grep -qF "$CANONICAL" -- docs/src/utils/config.js 2>/dev/null; then
+  echo "❌ pre-push: canonical workerUrl missing in config.js — $CANONICAL" >&2
+  found=1
+fi
+
+if [ "$found" = "1" ]; then
+  echo "" >&2
+  echo "🛑 push 차단: drift 위험 감지. 수정 후 다시 커밋·푸시." >&2
+  exit 1
+fi
+
+echo "✅ pre-push: drift guard passed"
+exit 0

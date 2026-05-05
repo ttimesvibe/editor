@@ -2,6 +2,10 @@ import { useState, useEffect } from "react";
 import { C, FN } from "../utils/styles.js";
 import { loadDictionary, saveDictionaryToServer } from "../utils/dictionary.js";
 
+// CMS v2 — D2/B3 모달 (저장 실패 / 충돌 / 복원 / 백업 목록)
+// 묶음 ① ½ — 별도 파일 ./v2_modals.jsx 에서 export
+export { SaveFailModal, ConflictModal, RestoreModal, BackupListModal } from "./v2_modals.jsx";
+
 export function ShareModal({ shareUrl, onClose }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
