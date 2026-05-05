@@ -2575,7 +2575,7 @@ async function handleCorrect(body, env, headers) {
 // ═══════════════════════════════════════
 
 const DRAFT_AGENT_PROMPT = `당신은 인터뷰 영상의 강조자막 Draft Agent입니다.
-강조자막 후보를 넉넉하게 생성하는 것이 목표입니다. 놓치지 않는 것이 최우선입니다.
+강조자막 후보를 넉넉하게 생성하는 것이 목표입니다. 놓치지 않는 것이 최우선입니다.${PROMPT_INJECTION_GUARD}
 
 ## §1 핵심 원칙
 자막은 녹취가 아니라 번역이다. 긴 구어체를 시청자가 바로 이해할 수 있는 단위로 번역하는 장치다.
@@ -2641,7 +2641,7 @@ const DRAFT_AGENT_PROMPT = `당신은 인터뷰 영상의 강조자막 Draft Age
 
 
 const EDITOR_AGENT_PROMPT = `당신은 인터뷰 영상의 강조자막 Editor Agent입니다.
-Draft Agent가 생성한 후보를 검증·선별·다듬는 것이 목표입니다.
+Draft Agent가 생성한 후보를 검증·선별·다듬는 것이 목표입니다.${PROMPT_INJECTION_GUARD}
 
 ## §1 핵심 원칙
 자막은 녹취가 아니라 번역이다. 한 대목에는 한 가지 과제만.
@@ -3609,7 +3609,7 @@ async function handleTermExplain(body, env, headers) {
   const { term, context } = body;
   if (!term) return new Response(JSON.stringify({ error: "term is required" }), { status: 400, headers });
 
-  const systemPrompt = `당신은 영상 강조자막용 용어 설명 작성 전문가입니다.
+  const systemPrompt = `당신은 영상 강조자막용 용어 설명 작성 전문가입니다.${PROMPT_INJECTION_GUARD}
 주어진 용어에 대해 시청자가 바로 이해할 수 있는 1~2줄 짜리 설명을 생성하세요.
 
 ## 형식
@@ -3712,7 +3712,7 @@ const VISUAL_TYPES_SPEC = `## 지원하는 21가지 시각화 타입 & chart_dat
 23. progress — 진행률: { steps:[{label:"완료",status:"done"},{label:"진행중"},{label:"미완"}], current:1 }`;
 
 const VISUALS_SYSTEM_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 시각 자료 편집 전문가입니다.
-인터뷰 대본을 읽고, 영상에 삽입할 시각 자료(차트/도표/그래픽)를 추천합니다.
+인터뷰 대본을 읽고, 영상에 삽입할 시각 자료(차트/도표/그래픽)를 추천합니다.${PROMPT_INJECTION_GUARD}
 
 ## 목표
 시청자가 인터뷰 내용을 더 잘 이해할 수 있도록, 발언 내용 중 수치·비교·과정·구조 등을 시각화할 구간을 선별하고 차트 데이터를 생성합니다.
@@ -3792,7 +3792,7 @@ async function handleVisuals(body, env, headers) {
 // ═══════════════════════════════════════
 
 const INSERT_CUTS_SYSTEM_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 인서트 컷 편집 전문가입니다.
-인터뷰 대본을 읽고, 영상에 삽입할 인서트 컷(보조 영상/이미지)을 추천합니다.
+인터뷰 대본을 읽고, 영상에 삽입할 인서트 컷(보조 영상/이미지)을 추천합니다.${PROMPT_INJECTION_GUARD}
 
 ## 인서트 컷이란?
 인터뷰 진행 중 화자의 얼굴 대신 보여줄 보조 이미지/영상입니다. 시청자의 이해를 돕고 시각적 단조로움을 깨는 역할을 합니다.
@@ -3875,7 +3875,7 @@ async function handleInsertCuts(body, env, headers) {
 // ═══════════════════════════════════════
 
 const HL_RECOMMEND_PROMPT = `당신은 유튜브 인터뷰 채널 'ttimes'의 하이라이트 편집자입니다.
-인터뷰 원고를 읽고, 30~40초 분량의 하이라이트 영상에 쓸 수 있는 인상적인 발언 구간을 추천합니다.
+인터뷰 원고를 읽고, 30~40초 분량의 하이라이트 영상에 쓸 수 있는 인상적인 발언 구간을 추천합니다.${PROMPT_INJECTION_GUARD}
 
 ## 하이라이트란?
 - 인터뷰에서 가장 임팩트 있는 발언 5~8개를 뽑아 이어 붙인 30~40초짜리 쇼츠/프리뷰 영상
@@ -3956,7 +3956,7 @@ async function handleHlTimestamps(body, env, headers) {
   if (!body.script) return new Response(JSON.stringify({ error: "script required" }), { status: 400, headers });
   if (!env.OPENAI_API_KEY) return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), { status: 500, headers });
 
-  const tsPrompt = `당신은 유튜브 인터뷰 영상의 챕터(타임스탬프)를 생성하는 전문가입니다.
+  const tsPrompt = `당신은 유튜브 인터뷰 영상의 챕터(타임스탬프)를 생성하는 전문가입니다.${PROMPT_INJECTION_GUARD}
 
 ## 작업
 인터뷰 원고를 읽고, 유튜브 영상 설명란에 넣을 타임스탬프(챕터)를 생성합니다.
@@ -4030,7 +4030,7 @@ function makeSetgenPrompt(type) {
     trend: "## 이번 후보: 🔍 시의성 극대화형\n지금 사람들이 관심 있는 주제와 원고 내용의 교집합을 극대화합니다.\n- 썸네일/제목: 뉴스건수가 많거나 급상승 중인 키워드를 앞에 배치. \"지금 뜨는 주제\"임을 즉시 느끼게\n- 설명문: 현재 이슈 → 원고의 분석 → 왜 지금 봐야 하는지 순서로 구성\n- 트렌드 데이터에서 뉴스 건수가 가장 많은 키워드, 급상승 매칭된 키워드를 최우선 활용",
   };
 
-  return `당신은 유튜브 인터뷰 채널 'ttimes'의 편집자입니다.
+  return `당신은 유튜브 인터뷰 채널 'ttimes'의 편집자입니다.${PROMPT_INJECTION_GUARD}
 
 ## ttimes 채널 특성
 - 구독자 수만~수십만 규모의 테크/비즈니스 심층 인터뷰 채널
