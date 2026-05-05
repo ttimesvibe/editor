@@ -462,6 +462,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             if (td.highlight?.clips) {
               setExportCache(prev => ({ ...prev, highlight: td.highlight }));
             }
+            // CMS v2 — visual/modify/setgen 도 exportCache 에 박음 (자식 컴포넌트의 자체 fetch 회피)
+            const cachePatch = {};
+            if (td.visual) cachePatch.visual = td.visual;
+            if (td.modify) cachePatch.modify = td.modify;
+            if (td.setgen) cachePatch.setgen = td.setgen;
+            if (Object.keys(cachePatch).length > 0) {
+              setExportCache(prev => ({ ...prev, ...cachePatch }));
+            }
             setGReady(hasHl);
 
             // blocks가 비어있고 manuscript 탭에 원고가 있으면 자동으로 0차 검토 시작

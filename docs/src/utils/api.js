@@ -254,15 +254,16 @@ export async function apiLeave(sessionId, config, user) {
   if (!base) return null;
   try {
     const body = JSON.stringify({ user });
-    const blob = new Blob([body], { type: "application/json" });
-    // pagehide 안전 호출
+    // CMS v2 — CORS simple request 로 분류되도록 text/plain 사용 (preflight 회피)
+    // Worker 측은 body 를 JSON 으로 파싱하므로 Content-Type 헤더 무관.
+    const blob = new Blob([body], { type: "text/plain" });
     if (navigator.sendBeacon) {
       navigator.sendBeacon(`${base}/session/${sessionId}/leave`, blob);
       return { sent: "beacon" };
     }
     const r = await fetch(`${base}/session/${sessionId}/leave`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "text/plain", ...authHeaders() },
       body,
       keepalive: true,
     });

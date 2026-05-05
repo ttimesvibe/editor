@@ -493,14 +493,19 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
   }, [currentTab]);
 
   // ── 세션 로드 ──
+  // CMS v2 — 부모(App.jsx)가 meta.stages 기반으로 initialData 를 박아주므로
+  // initialData 가 도착하면 restoredRef 가 true → 자체 fetch skip.
+  // initialData 가 명시적 null/undefined 또는 200ms 안에 안 오면 fallback 으로 시도.
   useEffect(() => {
-    if (!sessionId || !config || loaded) return;
-    (async () => {
+    if (!sessionId || !config || loaded || restoredRef.current) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (cancelled || restoredRef.current) return;
       try {
         const base = config.workerUrl;
         const _tk = localStorage.getItem("ttimes_token");
         const r = await fetch(`${base}/load/${sessionId}/visual`, { headers: _tk ? { "Authorization": `Bearer ${_tk}` } : {} });
-        if (!r.ok) return;
+        if (!r.ok) { setLoaded(true); return; }
         const data = await r.json();
         const d = data?.data || data; // data.data (레거시) 또는 data 직접
         if (d && (d.visualGuides || d.insertCuts || d.manualResources)) {
@@ -514,7 +519,8 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
         }
         setLoaded(true);
       } catch { setLoaded(true); }
-    })();
+    }, 300); // CMS v2 — 부모가 initialData 박을 시간 부여
+    return () => { cancelled = true; clearTimeout(t); };
   }, [sessionId, config, loaded]);
 
   // ── 디바운스 자동저장 (3분 — KV 쓰기 한도 절약) ──

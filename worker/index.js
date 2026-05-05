@@ -138,6 +138,7 @@ export default {
     const allowedOrigin = getAllowedOrigin(request);
     const corsHeaders = {
       "Access-Control-Allow-Origin": allowedOrigin,
+      "Access-Control-Allow-Credentials": "true",  // CMS v2 — sendBeacon credentials 모드 호환
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
       // CMS v2 — CSP 헤더 (PS9, S-2, 묶음 ⑩)
@@ -151,6 +152,7 @@ export default {
       return new Response(null, {
         headers: {
           "Access-Control-Allow-Origin": allowedOrigin,
+          "Access-Control-Allow-Credentials": "true",
           "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type,Authorization",
           "Access-Control-Max-Age": "86400",
@@ -196,9 +198,14 @@ export default {
       }
     }
 
+    // CMS v2 — sendBeacon 호환: /leave 는 인증 면제 (sendBeacon 은 Authorization 헤더 못 보냄)
+    // 보안 영향: user.sub 만 받아 자기 entry 삭제. 다음 heartbeat 시 복구되므로 abuse 영향 최소.
+    const _path = new URL(request.url).pathname;
+    const isLeave = /^\/session\/[a-z0-9]{4,24}\/leave$/.test(_path);
+
     // JWT 인증 검증
-    const user = await verifyAuth(request, env);
-    if (!user) {
+    const user = isLeave ? null : await verifyAuth(request, env);
+    if (!isLeave && !user) {
       return new Response(JSON.stringify({ error: "인증이 필요합니다" }), {
         status: 401, headers: corsHeaders
       });

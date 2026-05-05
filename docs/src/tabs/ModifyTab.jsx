@@ -372,9 +372,12 @@ export function ModifyTab({ sessionId, config, onSave, currentTab, initialData, 
   }, [currentTab]);
 
   // ── 세션 로드 ──
+  // CMS v2 — 부모가 meta.stages 기반 initialData 박음. restoredRef → fetch skip.
   useEffect(() => {
-    if (!sessionId || !base || loaded) return;
-    (async () => {
+    if (!sessionId || !base || loaded || restoredRef.current) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (cancelled || restoredRef.current) return;
       try {
         const _tk = localStorage.getItem("ttimes_token");
         const _ah = _tk ? { "Authorization": `Bearer ${_tk}` } : {};
@@ -403,7 +406,8 @@ export function ModifyTab({ sessionId, config, onSave, currentTab, initialData, 
         }
         setLoaded(true);
       } catch { setLoaded(true); }
-    })();
+    }, 300); // CMS v2 — 부모 initialData 시간 부여
+    return () => { cancelled = true; clearTimeout(t); };
   }, [sessionId, base, loaded]);
 
   // ── 디바운스 자동저장 ──
