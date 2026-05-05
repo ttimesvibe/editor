@@ -11,3 +11,5 @@ kv-snapshot/*/targets.txt
 
 # wrangler 로컬 상태
 worker/.wrangler/
+kv-backup-*.json
+anomalies.json

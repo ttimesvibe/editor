@@ -22,11 +22,16 @@ const STATUS_KEY = "migrate:_stableId:status";
 const SAMPLE_SIZE = 10;
 
 // ── 유틸 ──
+// CMS v2 — multi-account 환경에서 명시적 account_id 전달 (CLAUDE.md 메모: 두 계정 보유)
+const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "d556c524bda75cc7c5b5f13b6433ede7"; // PROD 기본
 function wrangler(cmd) {
   try {
-    return execSync(`npx -y wrangler ${cmd} --namespace-id=${NS} --remote`, { encoding: "utf8" });
+    return execSync(`npx -y wrangler ${cmd} --namespace-id=${NS} --remote`, {
+      encoding: "utf8",
+      env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID },
+    });
   } catch (e) {
-    return null;  // key 부재 시 normal
+    return null;
   }
 }
 
@@ -97,9 +102,12 @@ function analyzeDump(dump) {
         if (item._stableId) {
           stats.alreadyMigrated += 1;
           stats.perEntity[entityType].migrated += 1;
-        } else if (!item.subtitle && !item.text && !item.url && !item.blockIndex && item.blockIndex !== 0) {
+        } else if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          // 진짜 비정상: 객체가 아닌 경우만
           stats.anomalies.push({ key, entityType, item });
         } else {
+          // entity 마다 식별 필드 다름 (hl: subtitle/text, visualGuides: query/type/url, diffs: blockIndex/posStart 등)
+          // _stableId 부재 = 마이그레이션 대상.
           stats.toMigrate += 1;
           stats.perEntity[entityType].toMigrate += 1;
         }
