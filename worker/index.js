@@ -986,7 +986,20 @@ async function handleProjectDelete(body, user, env, headers) {
   target.deletedAt = now;
   target.deletedBy = deletedBy;
   target.updatedAt = now;
+  // CMS v2 — K-3: 휴지통 30일 TTL (자동 영구 삭제 후보 표시 + entity TTL 단축)
+  const purgeAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  target.purgeEligibleAt = purgeAt;
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
+
+  // entity 키들의 TTL 을 30일로 단축 (read+put)
+  const TTL_30D = 30 * 24 * 60 * 60;
+  for (const t of PROJECT_TAB_KEYS) {
+    try {
+      const key = `s:${id}:${t}`;
+      const val = await env.SESSIONS.get(key);
+      if (val) await env.SESSIONS.put(key, val, { expirationTtl: TTL_30D });
+    } catch (e) { console.warn(`[trash-ttl] ${id}:${t} TTL 갱신 실패:`, e?.message); }
+  }
 
   // 부모 shoot 의 childProjectIds 에서는 분리 (삭제 대기 상태를 칸반에 노출 X)
   const parentShootId = target.parentShootId || null;
@@ -1057,7 +1070,18 @@ async function handleProjectRestore(body, user, env, headers) {
   delete target.deleted;
   delete target.deletedAt;
   delete target.deletedBy;
+  delete target.purgeEligibleAt;
   target.updatedAt = new Date().toISOString();
+
+  // CMS v2 — K-3: 복원 시 entity 키 TTL 1년 복원
+  const TTL_1Y = 365 * 24 * 60 * 60;
+  for (const t of PROJECT_TAB_KEYS) {
+    try {
+      const key = `s:${id}:${t}`;
+      const val = await env.SESSIONS.get(key);
+      if (val) await env.SESSIONS.put(key, val, { expirationTtl: TTL_1Y });
+    } catch (e) { console.warn(`[restore-ttl] ${id}:${t} TTL 복원 실패:`, e?.message); }
+  }
 
   // CMS v2 — W-4: 복원 시 stage / currentStep 강제 재계산 (실 KV 데이터 기반)
   // 휴지통 들어가기 전 상태 잃었을 수 있어 meta.stages 기반 재계산.
