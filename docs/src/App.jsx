@@ -288,12 +288,17 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
   const isInitialLoad = useRef(true); // 초기 로드 중에는 dirty 마킹 안 함
 
-  // ── localStorage 자동저장 ──────────────────────────────
+  // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
+  const teSessionDebounce = useRef(null);
   useEffect(() => {
     if (blocks.length === 0) return;
-    try {
-      localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark, exportCache }));
-    } catch {}
+    if (teSessionDebounce.current) clearTimeout(teSessionDebounce.current);
+    teSessionDebounce.current = setTimeout(() => {
+      try {
+        localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark, exportCache }));
+      } catch {}
+    }, 500);
+    return () => { if (teSessionDebounce.current) clearTimeout(teSessionDebounce.current); };
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark]);
 
   // CMS v2 — 묶음 ⑫ Phase 2+3 (30초 폴링 + heartbeat + active-users + leave)
