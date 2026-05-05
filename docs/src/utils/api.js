@@ -195,18 +195,91 @@ export async function apiHighlightsEdit(blocks, analysis, draftHighlights, cfg, 
 
 // ── 탭별 세션 저장/로드 (새 스키마) ──
 
-export async function apiSaveTab(sessionId, tab, data, config, fn) {
+// CMS v2 — apiSaveTab 시그니처 확장 (B5: baseSavedAt + baseVersion / B3: force / B11: deleted 응답 처리)
+// opts: { baseSavedAt, baseVersion, force }
+// 반환: { id, savedAt, version, merged, mergedBy }
+// 충돌 (409): error.status=409, error.serverData / error.serverVersion / error.serverUpdatedBy 포함
+// 삭제 (409 deleted): error.status=409, error.deleted=true
+export async function apiSaveTab(sessionId, tab, data, config, fn, opts = {}) {
   const base = config.workerUrl;
   if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  const body = { id: sessionId, tab, data, fn };
+  if (opts.baseSavedAt) body.baseSavedAt = opts.baseSavedAt;
+  if (opts.baseVersion !== undefined) body.baseVersion = opts.baseVersion;
+  if (opts.force) body.force = true;
   const r = await fetch(`${base}/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ id: sessionId, tab, data, fn }),
+    body: JSON.stringify(body),
   });
   handle401(r);
   const d = await r.json();
-  if (!d.success) throw new Error(d.error || "저장 실패");
-  return d.id;
+  if (r.status === 409) {
+    const err = new Error(d.error === "deleted" || d.error === "project deleted" ? "deleted" : "conflict");
+    err.status = 409;
+    err.serverSavedAt = d.serverSavedAt;
+    err.serverVersion = d.serverVersion;
+    err.serverUpdatedBy = d.serverUpdatedBy;
+    err.serverData = d.serverData;
+    err.deleted = d.error === "project deleted" || d.error === "deleted";
+    err.deletedAt = d.deletedAt;
+    err.deletedBy = d.deletedBy;
+    throw err;
+  }
+  if (!d.success) {
+    const err = new Error(d.error || "저장 실패");
+    err.status = r.status;
+    throw err;
+  }
+  return { id: d.id, savedAt: d.savedAt, version: d.version, merged: d.merged, mergedBy: d.mergedBy, warnings: d.warnings };
+}
+
+// CMS v2 — 멀티유저 sync (묶음 ⑫ Phase 3)
+export async function apiHeartbeat(sessionId, config, user, tab) {
+  const base = config.workerUrl;
+  if (!base) return null;
+  try {
+    const r = await fetch(`${base}/session/${sessionId}/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ user, tab }),
+    });
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
+
+export async function apiLeave(sessionId, config, user) {
+  const base = config.workerUrl;
+  if (!base) return null;
+  try {
+    const body = JSON.stringify({ user });
+    const blob = new Blob([body], { type: "application/json" });
+    // pagehide 안전 호출
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(`${base}/session/${sessionId}/leave`, blob);
+      return { sent: "beacon" };
+    }
+    const r = await fetch(`${base}/session/${sessionId}/leave`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body,
+      keepalive: true,
+    });
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
+
+export async function apiActiveUsers(sessionId, config) {
+  const base = config.workerUrl;
+  if (!base) return [];
+  try {
+    const r = await fetch(`${base}/session/${sessionId}/active-users`, { headers: authHeaders() });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return d.active || [];
+  } catch { return []; }
 }
 
 export async function apiLoadMeta(sessionId, config) {

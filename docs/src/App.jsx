@@ -4,9 +4,11 @@ import * as mammoth from "mammoth";
 // ── Utils ──
 import { loadConfig, saveConfig } from "./utils/config.js";
 import { loadDictionary, syncDictionaryFromServer, updateDictionary } from "./utils/dictionary.js";
-import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab, apiProjectUpdateStep } from "./utils/api.js";
+import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab, apiProjectUpdateStep, apiHeartbeat, apiLeave } from "./utils/api.js";
 import { createEmergencyBackup, getLatestBackup, listBackups, autoRetry } from "./utils/backup.js";
 import { SaveFailModal, ConflictModal, RestoreModal, BackupListModal } from "./components/v2_modals.jsx";
+import { mergeTabData as clientMergeTabData } from "./utils/clientMerge.js";
+import { tabLabel } from "./utils/errorMessages.js";
 import { parseDocxWithTrackChanges, computeBlockStrikes } from "./utils/docxParser.js";
 import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlocks, splitChunks, chunkToText, chunkCtx } from "./utils/lengthModel.js";
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
@@ -269,11 +271,18 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [exportCache, setExportCache] = useState({}); // { highlight, setgen, visual, modify }
 
   // CMS v2 — D2 모달 + 4중 백업 (묶음 ① ½)
-  const [saveFailModal, setSaveFailModal] = useState(null); // { failedTabs, sessionId, fn, payload, onRetry }
-  const [conflictModal, setConflictModal] = useState(null); // { tab, serverUpdatedBy, ... }
-  const [restoreModal, setRestoreModal] = useState(null);   // { backup, totalCount }
+  const [saveFailModal, setSaveFailModal] = useState(null);
+  const [conflictModal, setConflictModal] = useState(null);
+  const [restoreModal, setRestoreModal] = useState(null);
   const [backupListOpen, setBackupListOpen] = useState(false);
-  const autoSaveFailCount = useRef(0); // 자동저장 누적 실패 (3회 시 토스트)
+  const autoSaveFailCount = useRef(0);
+
+  // CMS v2 — 묶음 ⑫ 멀티유저 sync (Phase 1+2+3)
+  const lastLoadedAt = useRef({});       // { tab: serverSavedAt }
+  const lastLoadedVersion = useRef({});  // { tab: version }
+  const [activeUsers, setActiveUsers] = useState([]);
+  const [otherUserToast, setOtherUserToast] = useState(null); // { tab, by, at }
+  const lastToastShownAt = useRef({});   // debounce: { sub: timestamp }
 
   const lRef = useRef(null), rRef = useRef(null), syncing = useRef(false), bEls = useRef({});
   const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
@@ -286,6 +295,87 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark, exportCache }));
     } catch {}
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark]);
+
+  // CMS v2 — 묶음 ⑫ Phase 2+3 (30초 폴링 + heartbeat + active-users + leave)
+  useEffect(() => {
+    const id = sessionId;
+    if (!id || cfg.apiMode === "mock" || !cfg.workerUrl || !authUser) return;
+
+    let stopped = false;
+    const user = { sub: authUser.email, name: authUser.name };
+
+    const beat = async () => {
+      if (stopped) return;
+      const r = await apiHeartbeat(id, cfg, user, tab);
+      if (r?.active) {
+        setActiveUsers(r.active.filter(u => u.sub !== authUser.email));
+      }
+      // meta 폴링 동시
+      try {
+        const meta = await apiLoadMeta(id, cfg);
+        if (meta?.stages) {
+          for (const [t, info] of Object.entries(meta.stages)) {
+            const serverAt = info?.updatedAt;
+            const localAt = lastLoadedAt.current[t];
+            if (!serverAt) continue;
+            const updatedBy = meta.updatedBy;
+            const updatedSub = typeof updatedBy === "object" ? updatedBy?.sub : null;
+            if (updatedSub === authUser.email) continue;
+            if (!localAt || serverAt > localAt) {
+              // 5분 noise debounce per user
+              const debounceKey = updatedSub || "anon";
+              const last = lastToastShownAt.current[debounceKey] || 0;
+              if (Date.now() - last > 5 * 60 * 1000) {
+                setOtherUserToast({
+                  tab: t,
+                  by: typeof updatedBy === "object" ? updatedBy?.name : "다른 편집자",
+                  at: serverAt,
+                  type: "polled",
+                });
+                lastToastShownAt.current[debounceKey] = Date.now();
+              }
+            }
+          }
+        }
+      } catch {}
+    };
+
+    // 즉시 1회 + 30초 주기
+    beat();
+    const interval = setInterval(beat, 30 * 1000);
+
+    // 탭 활성화 시 즉시 1회
+    const onVisibility = () => { if (document.visibilityState === "visible") beat(); };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // pagehide 시 leave (sendBeacon)
+    const onPageHide = () => { try { apiLeave(id, cfg, user); } catch {} };
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      // 컴포넌트 unmount 시도 leave
+      try { apiLeave(id, cfg, user); } catch {}
+    };
+  }, [sessionId, cfg, authUser, tab]);
+
+  // CMS v2 — otherUserToast 자동 닫힘
+  useEffect(() => {
+    if (!otherUserToast) return;
+    const t = setTimeout(() => setOtherUserToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [otherUserToast]);
+
+  // CMS v2 — 탭 로드 시 lastLoadedAt + version 추적 (apiLoadTab 결과 갱신)
+  // App.jsx 내 기존 apiLoadTab 호출처 (line 308 results.forEach 영역) 가 이 ref 갱신.
+  // 별도 wrapping 없이 useEffect 로 sessionId 변경 시 초기화만.
+  useEffect(() => {
+    lastLoadedAt.current = {};
+    lastLoadedVersion.current = {};
+  }, [sessionId]);
 
   // CMS v2 — beforeunload 가드 (D2 1차 백업, 묶음 ① ½)
   useEffect(() => {
@@ -343,7 +433,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             const tabs = ["correction","guide","highlight","visual","modify","setgen","review","manuscript"];
             const results = await Promise.allSettled(tabs.map(t => apiLoadTab(sid, t, cfg)));
             const td = {};
-            results.forEach((r, i) => { if (r.status === "fulfilled" && r.value) td[tabs[i]] = r.value; });
+            results.forEach((r, i) => {
+              if (r.status === "fulfilled" && r.value) {
+                td[tabs[i]] = r.value;
+                // CMS v2 — lastLoadedAt + version 추적 (B5)
+                if (r.value.savedAt) lastLoadedAt.current[tabs[i]] = r.value.savedAt;
+                if (r.value.version !== undefined) lastLoadedVersion.current[tabs[i]] = r.value.version;
+              }
+            });
             const c = td.correction || {};
             setBlocks(c.blocks || []); setAnal(c.anal || null); setDiffs(c.diffs || []);
             setScriptEdits(c.scriptEdits || {}); setBlockDeletions(c.blockDeletions || {});
@@ -524,26 +621,31 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     const tabsToSave = [];
     const payloads = {};
     const saves = [];
+    const optsFor = (tab) => ({
+      baseSavedAt: lastLoadedAt.current[tab],
+      baseVersion: lastLoadedVersion.current[tab],
+      force: !!opts.force,
+    });
     if (dirty.has("correction")) {
       const d = overrides.correction || { blocks, anal, diffs, scriptEdits, blockDeletions };
       payloads.correction = d; tabsToSave.push("correction");
-      saves.push(apiSaveTab(id, "correction", d, cfg, fn));
+      saves.push(apiSaveTab(id, "correction", d, cfg, fn, optsFor("correction")));
     }
     if (dirty.has("review")) {
       const d = overrides.review || reviewData || {};
       payloads.review = d; tabsToSave.push("review");
-      saves.push(apiSaveTab(id, "review", d, cfg, fn));
+      saves.push(apiSaveTab(id, "review", d, cfg, fn, optsFor("review")));
     }
     if (dirty.has("guide")) {
       const d = overrides.guide || { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
       payloads.guide = d; tabsToSave.push("guide");
-      saves.push(apiSaveTab(id, "guide", d, cfg, fn));
+      saves.push(apiSaveTab(id, "guide", d, cfg, fn, optsFor("guide")));
     }
     if (dirty.has("highlight")) {
       const d = overrides.highlight || exportCache.highlight;
       if (d) {
         payloads.highlight = d; tabsToSave.push("highlight");
-        saves.push(apiSaveTab(id, "highlight", d, cfg, fn));
+        saves.push(apiSaveTab(id, "highlight", d, cfg, fn, optsFor("highlight")));
       }
     }
     if (saves.length === 0) return;
@@ -555,7 +657,16 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     const success = [];
     results.forEach((r, i) => {
       const t = tabsToSave[i];
-      if (r.status === "fulfilled") success.push(t);
+      if (r.status === "fulfilled") {
+        success.push(t);
+        // CMS v2 — 성공 시 lastLoadedAt + version 갱신 (B5)
+        if (r.value?.savedAt) lastLoadedAt.current[t] = r.value.savedAt;
+        if (r.value?.version !== undefined) lastLoadedVersion.current[t] = r.value.version;
+        // 머지된 경우 토스트
+        if (r.value?.merged && r.value?.mergedBy?.sub !== authUser?.email) {
+          setOtherUserToast({ tab: t, by: r.value.mergedBy?.name || "다른 편집자", at: r.value.savedAt, type: "merged" });
+        }
+      }
       else if (r.reason?.status === 409) conflicts.push({ tab: t, payload: payloads[t], reason: r.reason });
       else failed.push({ tab: t, error: r.reason, payload: payloads[t] });
     });
@@ -594,20 +705,74 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       autoSaveFailCount.current = 0;
     }
 
-    // 충돌 처리 (B3)
+    // 충돌 처리 (B3) — 묶음 ⑫ Phase 1
     if (conflicts.length > 0) {
-      // 백업 자동 (D2 2차 + B3 통합)
       for (const c of conflicts) {
         createEmergencyBackup({ type: "conflict", sessionId: id, fn, payload: c.payload, reason: "conflict 409" });
       }
       // 첫 충돌만 모달 (다중 충돌 시 한 번에 한 탭)
       const c = conflicts[0];
+      const applyServerToState = (tab, serverData) => {
+        // 서버 데이터로 React state 갱신 (탭 별)
+        if (tab === "correction") {
+          if (serverData.blocks) setBlocks(serverData.blocks);
+          if (serverData.anal !== undefined) setAnal(serverData.anal);
+          if (serverData.diffs !== undefined) setDiffs(serverData.diffs);
+          if (serverData.scriptEdits !== undefined) setScriptEdits(serverData.scriptEdits || {});
+          if (serverData.blockDeletions !== undefined) setBlockDeletions(serverData.blockDeletions || {});
+        } else if (tab === "review") {
+          if (serverData.reviewData !== undefined) setReviewData(serverData.reviewData);
+        } else if (tab === "guide") {
+          if (serverData.hl !== undefined) setHl(serverData.hl || []);
+          if (serverData.hlStats !== undefined) setHlStats(serverData.hlStats);
+          if (serverData.hlVerdicts !== undefined) setHlVerdicts(serverData.hlVerdicts || {});
+          if (serverData.hlEdits !== undefined) setHlEdits(serverData.hlEdits || {});
+          if (serverData.hlMarkers !== undefined) setHlMarkers(serverData.hlMarkers || {});
+        }
+        if (serverData.savedAt) lastLoadedAt.current[tab] = serverData.savedAt;
+        if (serverData.version !== undefined) lastLoadedVersion.current[tab] = serverData.version;
+      };
       setConflictModal({
         tab: c.tab,
         serverUpdatedBy: c.reason?.serverUpdatedBy,
-        onMerge: () => { setConflictModal(null); /* TODO 묶음 ⑥ 시점에 clientMergeTabData + 강제 저장 */ },
-        onAcceptServer: () => { setConflictModal(null); /* TODO reload */ },
-        onForceMine: () => { setConflictModal(null); /* TODO force flag 저장 */ },
+        onMerge: async () => {
+          try {
+            const merged = clientMergeTabData(c.reason.serverData || {}, c.payload, c.tab);
+            await apiSaveTab(id, c.tab, merged, cfg, fn, {
+              baseSavedAt: c.reason.serverSavedAt,
+              baseVersion: c.reason.serverVersion,
+              force: true,
+            });
+            applyServerToState(c.tab, merged);
+            dirtyTabs.current.delete(c.tab);
+            setConflictModal(null);
+            setOtherUserToast({ tab: c.tab, by: "양쪽 합침 완료", at: new Date().toISOString(), type: "merged" });
+          } catch (e) {
+            console.error("[merge] failed:", e?.message || e);
+            setErr("합치기에 실패했습니다: " + (e?.message || ""));
+            setConflictModal(null);
+          }
+        },
+        onAcceptServer: () => {
+          applyServerToState(c.tab, c.reason.serverData || {});
+          dirtyTabs.current.delete(c.tab);
+          setConflictModal(null);
+        },
+        onForceMine: async () => {
+          try {
+            await apiSaveTab(id, c.tab, c.payload, cfg, fn, {
+              baseSavedAt: c.reason.serverSavedAt,
+              baseVersion: c.reason.serverVersion,
+              force: true,
+            });
+            dirtyTabs.current.delete(c.tab);
+            setConflictModal(null);
+          } catch (e) {
+            console.error("[force-save] failed:", e?.message || e);
+            setErr("강제 저장에 실패했습니다: " + (e?.message || ""));
+            setConflictModal(null);
+          }
+        },
         onClose: () => setConflictModal(null),
       });
     }
@@ -618,7 +783,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       err.failed = failed; err.conflicts = conflicts;
       throw err;
     }
-  }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, cfg, fn]);
+  }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, cfg, fn, authUser]);
 
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   // overrideData: setState 직후 아직 렌더링 전일 때 최신 데이터를 직접 전달
@@ -2358,6 +2523,28 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       
       body{overflow:hidden}
     `}</style>
+    {/* CMS v2 — 묶음 ⑫ active-users 헤더 인디케이터 (Phase 3) */}
+    {activeUsers.length > 0 && <div style={{
+      position: "fixed", top: 56, right: 16, zIndex: 100,
+      background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
+      borderRadius: 20, padding: "6px 14px", fontSize: 13, color: "#16A34A",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+    }}>
+      👥 동시 편집: {activeUsers.map(u => `${u.name}${u.tabs?.length > 1 ? ` (탭 ${u.tabs.length}개)` : ""}`).join(", ")}
+    </div>}
+    {/* CMS v2 — 묶음 ⑫ otherUserToast (Phase 2 폴링) */}
+    {otherUserToast && <div style={{
+      position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+      zIndex: 200, padding: "12px 20px",
+      background: otherUserToast.type === "merged" ? "rgba(34,197,94,0.95)" : "rgba(59,130,246,0.95)",
+      color: "#fff", borderRadius: 10, fontSize: 14, fontWeight: 600,
+      boxShadow: "0 8px 24px rgba(0,0,0,0.25)", maxWidth: 480,
+    }}>
+      {otherUserToast.type === "merged"
+        ? `✓ ${otherUserToast.by}의 변경사항도 함께 저장되었습니다 (${tabLabel(otherUserToast.tab)})`
+        : `📝 ${otherUserToast.by}님이 ${tabLabel(otherUserToast.tab)} 탭을 수정했습니다`}
+      <button onClick={() => setOtherUserToast(null)} style={{ marginLeft: 12, background: "transparent", border: "none", color: "#fff", cursor: "pointer", fontSize: 16 }}>✕</button>
+    </div>}
     {/* CMS v2 — D2/B3 모달 (묶음 ① ½) */}
     {saveFailModal && <SaveFailModal {...saveFailModal} />}
     {conflictModal && <ConflictModal {...conflictModal} />}
