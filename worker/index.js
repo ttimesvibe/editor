@@ -225,7 +225,7 @@ if (path === "/debug-location") {
     }
 
     // CMS v2 — /session/{id}/active-users (GET, 묶음 ⑫ Phase 3)
-    const activeMatch = path.match(/^\/session\/([a-z0-9]{8})\/active-users$/);
+    const activeMatch = path.match(/^\/session\/([a-z0-9]{4,24})\/active-users$/);
     if (activeMatch && request.method === "GET") {
       return await handleSessionActiveUsers(activeMatch[1], env, corsHeaders);
     }
@@ -383,11 +383,11 @@ if (path === "/debug-location") {
       else if (path === "/hl-timestamps") return await handleHlTimestamps(body, env, corsHeaders);
       else if (path === "/setgen") return await handleSetgen(body, env, corsHeaders);
       // CMS v2 — 묶음 ⑫ 멀티유저 sync (Phase 3)
-      else if (path.match(/^\/session\/[a-z0-9]{8}\/heartbeat$/)) {
+      else if (path.match(/^\/session\/[a-z0-9]{4,24}\/heartbeat$/)) {
         const sid = path.split("/")[2];
         return await handleSessionHeartbeat(sid, body, env, corsHeaders);
       }
-      else if (path.match(/^\/session\/[a-z0-9]{8}\/leave$/)) {
+      else if (path.match(/^\/session\/[a-z0-9]{4,24}\/leave$/)) {
         const sid = path.split("/")[2];
         return await handleSessionLeave(sid, body, env, corsHeaders);
       }
@@ -404,7 +404,9 @@ if (path === "/debug-location") {
 
 // CMS v2 — 입력 검증 (E4, E5, 묶음 ⑩) + deleted head check (B11, 묶음 ④)
 const VALID_TAB_KEYS = new Set(["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"]);
-const VALID_ID_RE = /^[a-z0-9]{8}$/;
+// 세션 ID = 영숫자만, 4~24자 (실제 생성 5~10자 + 기존 12~13자 ID 호환).
+// path traversal / 특수 문자 차단이 목적, 길이는 폭넓게 허용.
+const VALID_ID_RE = /^[a-z0-9]{4,24}$/;
 
 async function checkDeletedAndForbidden(id, env) {
   if (!id) return null;
