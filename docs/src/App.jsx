@@ -997,6 +997,23 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
   // Process file — analyze only, then pause for term review
   const handleFile = useCallback(async(text,name)=>{
+    // CMS v2 — N4: 재업로드 confirm + W-2 백업 (이미 작업 중인 데이터 보호)
+    if (blocks.length > 0 || diffs.length > 0 || hl.length > 0 || reviewData) {
+      const ok = window.confirm(
+        `이미 편집 중인 작업이 있습니다.\n\n새 원고를 업로드하면 현재 작업이 덮어씌워집니다.\n\n계속하시겠습니까?\n\n(현재 작업은 백업 파일로 자동 저장됩니다.)`
+      );
+      if (!ok) return;
+      // 현재 작업 백업 (manuscript_replace 타입)
+      try {
+        createEmergencyBackup({
+          type: "manuscript_replace",
+          sessionId: sessionId || "draft",
+          fn,
+          payload: { blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, exportCache },
+          reason: `manuscript replace: ${fn || "(이전)"} → ${name}`,
+        });
+      } catch (e) { console.warn("[backup] manuscript_replace 백업 실패:", e?.message); }
+    }
     setFn(name); setBusy(true); setErr(null); setDiffs([]); setHl([]); setHlStats(null); setGReady(false);
     setTermReview(false); setTab("correction");
     try {
