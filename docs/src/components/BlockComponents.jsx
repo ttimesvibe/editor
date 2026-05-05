@@ -1,6 +1,10 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, memo } from "react";
 import { C, FN, MARKER_COLORS } from "../utils/styles.js";
 import { findPositions, toSegs } from "../utils/diffRenderer.js";
+
+// CMS v2 — G3/G-1: React.memo 명시 비교 — 100+ 블록 재렌더 완화 (PS1, P1-31)
+// shallow 비교로 충분한 props (block 객체 자체가 변경 안 되면 재렌더 X).
+// nested 변경 (예: pos 배열 내부) 은 useMemo 로 안정화 (App.jsx 측 책임).
 
 // ═══════════════════════════════════════════════
 // SMALL COMPONENTS
@@ -168,7 +172,7 @@ export function TypeBadge({ type, onChangeType }) {
   </span>;
 }
 
-export function BlockView({ block, pos, side, active, onClick, bRef, showIndex }) {
+function _BlockView({ block, pos, side, active, onClick, bRef, showIndex }) {
   const segs = toSegs(block.text, pos, side);
   return <div ref={bRef} onClick={() => onClick?.(block.index)}
     style={{padding:"10px 16px",borderLeft:`4px solid ${active?"#A855F7":"transparent"}`,
@@ -207,7 +211,7 @@ export function BlockView({ block, pos, side, active, onClick, bRef, showIndex }
 }
 
 // ── 0차: 원고 검토 블록 (삭제선 표시) ──
-export function ReviewBlock({ block, paragraphSegments, strikeRanges, isDeleted, onClick, active, bRef }) {
+function _ReviewBlock({ block, paragraphSegments, strikeRanges, isDeleted, onClick, active, bRef }) {
   const idx = block.index;
 
   // strikeRanges가 있으면 블록 텍스트를 세그먼트로 분리
@@ -264,7 +268,7 @@ export function ReviewBlock({ block, paragraphSegments, strikeRanges, isDeleted,
 }
 
 // ── 1.5단계: 스크립트 편집 블록 (Hooks 사용을 위해 별도 컴포넌트) ──
-export function ScriptEditBlock({ block, correctedText, editedVal, isEdited, onSave, onRevert, deletions }) {
+function _ScriptEditBlock({ block, correctedText, editedVal, isEdited, onSave, onRevert, deletions }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const rawText = editedVal !== undefined ? editedVal : correctedText;
@@ -342,7 +346,7 @@ export function ScriptEditBlock({ block, correctedText, editedVal, isEdited, onS
 }
 
 // ── 1차 교정 탭 우측: 수정본 블록 + ✏️ 인라인 편집 ──
-export function CorrectionRightBlock({ block, pos, active, onClick, bRef, correctedText, editedVal, isEdited, onSave, onRevert, deletions, onAddDeletion, onRemoveDeletion }) {
+function _CorrectionRightBlock({ block, pos, active, onClick, bRef, correctedText, editedVal, isEdited, onSave, onRevert, deletions, onAddDeletion, onRemoveDeletion }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const textRef = useRef(null);
@@ -477,3 +481,10 @@ export function CorrectionRightBlock({ block, pos, active, onClick, bRef, correc
     </div>
   </div>;
 }
+
+// CMS v2 — G3/G-1: React.memo wrap (100+ 블록 재렌더 완화, PS1/P1-31)
+// shallow 비교로 props 안정 시 재렌더 skip. App.jsx 측에서 useMemo 로 props 안정화 의무.
+export const BlockView = memo(_BlockView);
+export const ReviewBlock = memo(_ReviewBlock);
+export const ScriptEditBlock = memo(_ScriptEditBlock);
+export const CorrectionRightBlock = memo(_CorrectionRightBlock);
