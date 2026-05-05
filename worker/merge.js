@@ -7,14 +7,11 @@ export const PROTO_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 export const MAX_DEPTH = 32;
 
 // SHA-256 12자 fallback ID (B2 / B4)
+// Cloudflare Worker + Node 양쪽 호환: globalThis.crypto.subtle 사용 (Node 19+ / Worker 표준).
+// Node test runner (22.x) 도 globalThis.crypto 제공.
 async function sha256_12(str) {
-  if (typeof crypto !== "undefined" && crypto.subtle) {
-    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-    return [...new Uint8Array(buf)].slice(0, 6).map(b => b.toString(16).padStart(2, "0")).join("");
-  }
-  // Node fallback (테스트)
-  const { createHash } = require("node:crypto");
-  return createHash("sha256").update(str).digest("hex").slice(0, 12);
+  const buf = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].slice(0, 6).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // fallback ID 동기 버전 (단순 hash, 충돌 가능성 더 높지만 빠름)
