@@ -1058,6 +1058,29 @@ async function handleProjectRestore(body, user, env, headers) {
   delete target.deletedAt;
   delete target.deletedBy;
   target.updatedAt = new Date().toISOString();
+
+  // CMS v2 — W-4: 복원 시 stage / currentStep 강제 재계산 (실 KV 데이터 기반)
+  // 휴지통 들어가기 전 상태 잃었을 수 있어 meta.stages 기반 재계산.
+  try {
+    const metaRaw = await env.SESSIONS.get(`s:${id}:meta`);
+    if (metaRaw) {
+      const meta = JSON.parse(metaRaw);
+      const stages = meta.stages || {};
+      // 가장 최근 갱신된 탭 기준 currentStep / stage 재산출
+      const stageOrder = ["meta","manuscript","review","correction","subtitle","guide","visual","modify","highlight","setgen"];
+      let lastTab = null, lastAt = null;
+      for (const t of stageOrder) {
+        if (stages[t]?.updatedAt && (!lastAt || stages[t].updatedAt > lastAt)) {
+          lastTab = t; lastAt = stages[t].updatedAt;
+        }
+      }
+      if (lastTab) target.currentStep = lastTab;
+      // modify 까지 됐으면 post-production
+      if (stages.modify?.updatedAt) target.stage = "post-production";
+      else if (stages.correction?.updatedAt) target.stage = "editing";
+    }
+  } catch (e) { console.warn("[project-restore] stage 재계산 실패:", e?.message); }
+
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
 
   // 부모 shoot 의 childProjectIds 에 다시 추가 (중복 방지)

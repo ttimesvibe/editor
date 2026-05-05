@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { C, FN } from "../utils/styles.js";
 import { KanbanView } from "./KanbanView.jsx";
+import { deleteBackupsForSession } from "../utils/backup.js";
 
 // ── Constants ──
 
@@ -187,6 +188,11 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
         body: JSON.stringify({ ids: [id] }),
       });
       if (!r.ok) { alert("영구삭제 실패: " + r.status); return; }
+      // CMS v2 — W-3: 영구 삭제 시 해당 sessionId 의 localStorage 백업 키도 정리
+      try {
+        const removed = deleteBackupsForSession(id);
+        if (removed > 0) console.log(`[backup] 영구 삭제 시 ${removed}개 백업 키 정리`);
+      } catch (e) { console.warn("[backup] 영구 삭제 백업 정리 실패:", e?.message); }
       setPurgingProject(null);
       fetchTrash();
     } catch (err) {
