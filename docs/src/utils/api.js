@@ -200,10 +200,25 @@ export async function apiHighlightsEdit(blocks, analysis, draftHighlights, cfg, 
 // 반환: { id, savedAt, version, merged, mergedBy }
 // 충돌 (409): error.status=409, error.serverData / error.serverVersion / error.serverUpdatedBy 포함
 // 삭제 (409 deleted): error.status=409, error.deleted=true
+// CMS v2 — D6-8: 클라가 user 정보를 매 저장 시 전송 → 서버 meta.updatedBy 객체 기록
+// JWT 토큰에서 sub/name 디코딩하여 body.user 로 전달.
+function _currentUser() {
+  try {
+    const tk = localStorage.getItem("ttimes_token");
+    if (!tk) return null;
+    const payloadB64 = tk.split(".")[1];
+    const payloadBytes = Uint8Array.from(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+    return { sub: payload.sub, name: payload.name };
+  } catch { return null; }
+}
+
 export async function apiSaveTab(sessionId, tab, data, config, fn, opts = {}) {
   const base = config.workerUrl;
   if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
   const body = { id: sessionId, tab, data, fn };
+  const user = _currentUser();
+  if (user) body.user = user;
   if (opts.baseSavedAt) body.baseSavedAt = opts.baseSavedAt;
   if (opts.baseVersion !== undefined) body.baseVersion = opts.baseVersion;
   if (opts.force) body.force = true;
