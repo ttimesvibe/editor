@@ -616,9 +616,45 @@ async function handleAutoSave(body, env, headers) {
   const data = body.data;
   const savedAt = new Date().toISOString();
 
+  // CMS v2 — 입력 검증 (E4, E5)
+  if (tab && !VALID_TAB_KEYS.has(tab)) {
+    return new Response(JSON.stringify({ error: "invalid tab key" }), { status: 400, headers });
+  }
+  if (body.id && !VALID_ID_RE.test(body.id)) {
+    return new Response(JSON.stringify({ error: "invalid session id format" }), { status: 400, headers });
+  }
+
+  // CMS v2 — deleted head check (B11)
+  if (body.id) {
+    const deleted = await checkDeletedAndForbidden(body.id, env);
+    if (deleted) {
+      return new Response(JSON.stringify({ error: "project deleted", ...deleted }), { status: 409, headers });
+    }
+  }
+
   if (tab && data) {
+    // CMS v2 — R8: handleAutoSave 도 머지 통합 (B1+B5+B6+B12 동일 적용)
+    // 자동저장 충돌 정책: 사용자 인지 없이 자동 머지 (silent). force=true 로 효과적으로 통과.
+    const cleanData = sanitizePayload(data);
+    const existingRaw = await env.SESSIONS.get(`s:${id}:${tab}`);
+    const existing = existingRaw ? JSON.parse(existingRaw) : null;
+
+    // 자동저장은 충돌 시 머지 (사용자 인지 없이 silent)
+    const merged = mergeTabData(existing || {}, cleanData, tab);
+
+    // 무결성 검증 (B6)
+    const violations = validateMergeResult(existing, merged, tab);
+    if (violations.length > 0) {
+      console.error("[merge-invariant] auto-save violation:", violations.join("; "));
+      return new Response(JSON.stringify({ error: "merge invariant violation", violations }), { status: 500, headers });
+    }
+
+    const newVersion = (existing?.version || 0) + 1;
+    const finalValue = { ...merged, savedAt, version: newVersion };
+    if (body.user) finalValue.updatedBy = { sub: body.user.sub, name: body.user.name, at: savedAt };
+
     // 탭별 자동 저장
-    await env.SESSIONS.put(`s:${id}:${tab}`, JSON.stringify({ ...data, savedAt }), { expirationTtl: 60*60*24*7 });
+    await env.SESSIONS.put(`s:${id}:${tab}`, JSON.stringify(finalValue), { expirationTtl: 60*60*24*7 });
     // meta도 자동 저장
     let meta;
     try {
@@ -628,11 +664,12 @@ async function handleAutoSave(body, env, headers) {
     if (!meta.sessionId) meta.sessionId = id;
     if (!meta.createdAt) meta.createdAt = savedAt;
     meta.updatedAt = savedAt;
+    if (body.user) meta.updatedBy = { sub: body.user.sub, name: body.user.name, at: savedAt };
     if (body.fn) meta.fn = body.fn;
     if (!meta.stages) meta.stages = {};
     meta.stages[tab] = { status: "진행중", updatedAt: savedAt };
     await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify(meta), { expirationTtl: 60*60*24*7 });
-    return new Response(JSON.stringify({ success: true, id }), { headers });
+    return new Response(JSON.stringify({ success: true, id, savedAt, version: newVersion }), { headers });
   }
 
   // 레거시 자동 저장
