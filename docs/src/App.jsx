@@ -261,7 +261,20 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [autoSaveStatus, setAutoSaveStatus] = useState(""); // "", "pending", "saving", "saved"
   const autoSaveTimer = useRef(null);
   const sessionIdRef = useRef(null);
-  const savingInProgress = useRef(false); // 동시 저장 방지
+  const savingInProgress = useRef(false); // 동시 저장 방지 (boolean — beforeunload 가드용)
+  // CMS v2 — A-1: mutex → 락(promise) 변환. 진행 중이면 skip 대신 대기 후 실행.
+  const saveLock = useRef(Promise.resolve());
+  const withSaveLock = useCallback(async (fn) => {
+    const prev = saveLock.current;
+    let release;
+    saveLock.current = new Promise(r => { release = r; });
+    try {
+      await prev;
+      return await fn();
+    } finally {
+      release();
+    }
+  }, []);
   const [saving, setSaving] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [hlMarkers, setHlMarkers] = useState({}); // { "blockIdx-subtitle": { color: "yellow", ranges: [{s,e}] } }
@@ -834,33 +847,34 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   //   예: autoSaveToKV({ diffs: ad }) → correction 탭에 ad를 직접 사용
   const autoSaveToKV = useCallback(async (overrideData = {}) => {
     if (cfg.apiMode === "mock") return;
-    if (savingInProgress.current) return;
-    savingInProgress.current = true;
-    try {
-      const id = sessionIdRef.current;
-      if (!id) { console.warn("자동 저장 스킵: 세션 ID 없음"); return; }
-      // overrideData를 탭별 overrides로 변환
-      const overrides = {};
-      if (overrideData.diffs !== undefined || overrideData.blocks !== undefined) {
-        overrides.correction = { blocks: overrideData.blocks || blocks, anal: overrideData.anal || anal, diffs: overrideData.diffs || diffs, scriptEdits: overrideData.scriptEdits || scriptEdits, blockDeletions: overrideData.blockDeletions || blockDeletions };
-        dirtyTabs.current.add("correction");
+    // CMS v2 — A-1: 락(promise) — 진행 중이면 대기 후 실행 (skip 안 함)
+    return withSaveLock(async () => {
+      savingInProgress.current = true;
+      try {
+        const id = sessionIdRef.current;
+        if (!id) { console.warn("[save-flow] auto-save skip: no session id"); return; }
+        const overrides = {};
+        if (overrideData.diffs !== undefined || overrideData.blocks !== undefined) {
+          overrides.correction = { blocks: overrideData.blocks || blocks, anal: overrideData.anal || anal, diffs: overrideData.diffs || diffs, scriptEdits: overrideData.scriptEdits || scriptEdits, blockDeletions: overrideData.blockDeletions || blockDeletions };
+          dirtyTabs.current.add("correction");
+        }
+        if (overrideData.hl !== undefined) {
+          overrides.guide = { hl: overrideData.hl || hl, hlStats: overrideData.hlStats || hlStats, hlVerdicts: overrideData.hlVerdicts || hlVerdicts, hlEdits: overrideData.hlEdits || hlEdits, hlMarkers: overrideData.hlMarkers || hlMarkers };
+          dirtyTabs.current.add("guide");
+        }
+        if (overrideData.reviewData !== undefined) {
+          overrides.review = overrideData.reviewData;
+          dirtyTabs.current.add("review");
+        }
+        await saveDirtyTabsToKV(id, overrides);
+        updateStepProgress(tab);
+      } catch (e) {
+        console.warn("[save-flow] auto-save failed:", e.message);
+      } finally {
+        savingInProgress.current = false;
       }
-      if (overrideData.hl !== undefined) {
-        overrides.guide = { hl: overrideData.hl || hl, hlStats: overrideData.hlStats || hlStats, hlVerdicts: overrideData.hlVerdicts || hlVerdicts, hlEdits: overrideData.hlEdits || hlEdits, hlMarkers: overrideData.hlMarkers || hlMarkers };
-        dirtyTabs.current.add("guide");
-      }
-      if (overrideData.reviewData !== undefined) {
-        overrides.review = overrideData.reviewData;
-        dirtyTabs.current.add("review");
-      }
-      await saveDirtyTabsToKV(id, overrides);
-      updateStepProgress(tab);
-    } catch (e) {
-      console.warn("자동 저장 실패:", e.message);
-    } finally {
-      savingInProgress.current = false;
-    }
-  }, [cfg, saveDirtyTabsToKV, blocks, anal, diffs, scriptEdits, blockDeletions, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, tab, updateStepProgress]);
+    });
+  }, [cfg, saveDirtyTabsToKV, blocks, anal, diffs, scriptEdits, blockDeletions, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, tab, updateStepProgress, withSaveLock]);
 
   // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 dirty 탭만 저장) ──
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -877,21 +891,23 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     autoSaveTimer.current = setTimeout(async () => {
       const curId = sessionIdRef.current;
       if (!curId) { setAutoSaveStatus(""); return; }
-      if (savingInProgress.current) { setAutoSaveStatus(""); return; }
       if (dirtyTabs.current.size === 0) { setAutoSaveStatus(""); return; }
-      savingInProgress.current = true;
+      // CMS v2 — A-1: 락(promise) — 진행 중이면 대기 후 실행
       setAutoSaveStatus("saving");
       try {
-        await saveDirtyTabsToKV(curId);
-        setLastSavedSnapshot(currentSnapshot);
-        setAutoSaveStatus("saved");
-        updateStepProgress(tab);
-        setTimeout(() => setAutoSaveStatus(""), 3000);
+        await withSaveLock(async () => {
+          savingInProgress.current = true;
+          try {
+            await saveDirtyTabsToKV(curId);
+            setLastSavedSnapshot(currentSnapshot);
+            setAutoSaveStatus("saved");
+            updateStepProgress(tab);
+            setTimeout(() => setAutoSaveStatus(""), 3000);
+          } finally { savingInProgress.current = false; }
+        });
       } catch (e) {
-        console.warn("자동 저장 실패:", e.message);
+        console.warn("[save-flow] debounce auto-save failed:", e.message);
         setAutoSaveStatus("");
-      } finally {
-        savingInProgress.current = false;
       }
     }, 30 * 1000); // CMS v2: 30초 (묶음 ② A-1, 3분 → 30초)
 
@@ -924,24 +940,26 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, fn, cfg]);
 
   const handleShare = useCallback(async () => {
-    if (savingInProgress.current) return; // 자동저장과 충돌 방지
-    savingInProgress.current = true;
+    // CMS v2 — A-1: 락(promise) — 자동저장 진행 중이면 skip 대신 대기 후 실행
     setSaving(true); setErr(null);
     try {
-      const id = sessionIdRef.current;
-      if (!id) { setErr("프로젝트 ID가 없습니다. 대시보드에서 프로젝트를 선택해주세요."); return; }
-      // 변경된 탭만 저장 (manual=true → 실패 시 SaveFailModal 자동 트리거)
-      await saveDirtyTabsToKV(id, {}, { manual: true });
-      const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
-      setShareUrl(url);
-      setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
-      if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
+      await withSaveLock(async () => {
+        savingInProgress.current = true;
+        try {
+          const id = sessionIdRef.current;
+          if (!id) { setErr("프로젝트 ID가 없습니다. 대시보드에서 프로젝트를 선택해주세요."); return; }
+          await saveDirtyTabsToKV(id, {}, { manual: true });
+          const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
+          setShareUrl(url);
+          setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
+          if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
+        } finally { savingInProgress.current = false; }
+      });
     } catch (e) {
-      // saveDirtyTabsToKV 가 모달을 이미 띄움 — 추가 setErr 안 함 (중복 알림 방지)
       if (!e.failed && !e.conflicts) setErr(e.message);
     }
-    finally { setSaving(false); savingInProgress.current = false; }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveDirtyTabsToKV]);
+    finally { setSaving(false); }
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveDirtyTabsToKV, withSaveLock]);
 
   // ── 내보내기 ──
   const handleExport = useCallback(async () => {
