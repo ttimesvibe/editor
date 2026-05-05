@@ -6,6 +6,8 @@
 
 // CMS v2 — 묶음 ⑥ Worker PATCH 머지 + 무결성 + 충돌 감지
 import { mergeTabData, validateMergeResult, sanitizePayload, detectConflict } from "./merge.js";
+// CMS v2 — P-1 권한 헬퍼 (자동 테스트 가능 모듈, 4/15 사고 재발 방지)
+import { isAdmin, canEdit, canDelete, canRestore, forbidden } from "./permissions.js";
 
 // 이메일 전용 (ttimesvibe 계정)
 const APPS_SCRIPT_EMAIL_URL = "https://script.google.com/macros/s/AKfycbxUH1FPI7OxF4_N1N8F6ExCNkyBTAZY3jmPjDch1W4Lqv96WbbxBzSky-Bkk5qF9MBW/exec";
@@ -94,44 +96,8 @@ async function verifyAuth(request, env) {
 // ── 권한 체크 헬퍼 ──
 // admin 식별: 1차 JWT role, 2차 team_members KV fallback.
 // team_members 는 auth Worker 가 /admin/users 로 동기화해 editor KV에 캐시하는 배열.
-async function isAdmin(user, env) {
-  if (!user?.sub) return false;
-  if (user.role === "admin") return true;
-  try {
-    const raw = await env.SESSIONS.get("team_members");
-    if (!raw) return false;
-    const members = JSON.parse(raw);
-    const me = members.find(m => m.email === user.sub);
-    return me?.role === "admin";
-  } catch { return false; }
-}
-
-// 프로젝트 수정 가능 여부: creator OR editors 배열 포함 OR admin
-async function canEdit(proj, user, env) {
-  if (!proj || !user?.sub) return false;
-  if (proj.creatorEmail === user.sub) return true;
-  if ((proj.editors || []).some(e => e?.email === user.sub)) return true;
-  return await isAdmin(user, env);
-}
-
-// 프로젝트 삭제 가능 여부: creator OR admin (editors 는 삭제 불가)
-async function canDelete(proj, user, env) {
-  if (!proj || !user?.sub) return false;
-  if (proj.creatorEmail === user.sub) return true;
-  return await isAdmin(user, env);
-}
-
-// 프로젝트 복구 가능 여부: creator OR deletedBy(본인이 지운 경우) OR admin
-async function canRestore(proj, user, env) {
-  if (!proj || !user?.sub) return false;
-  if (proj.creatorEmail === user.sub) return true;
-  if (proj.deletedBy === user.sub) return true;
-  return await isAdmin(user, env);
-}
-
-function forbidden(headers, msg) {
-  return new Response(JSON.stringify({ error: msg || "권한이 없습니다" }), { status: 403, headers });
-}
+// 권한 헬퍼는 worker/permissions.js 로 추출 (P-1, 단위 테스트 가능).
+// 변경 시 worker/__tests__/permissions.test.js 동시 갱신 의무.
 
 export default {
   async fetch(request, env) {
