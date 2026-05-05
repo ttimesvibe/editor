@@ -98,9 +98,11 @@ function YouTubePlayer({ videoId, onPlayerReady }) {
     if (!videoId) return;
     const initPlayer = () => {
       if (playerRef.current) { try { playerRef.current.destroy(); } catch {} }
+      // CMS v2 — origin 명시 → "Failed to execute 'postMessage'" SDK 에러 제거
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId,
-        playerVars: { rel: 0, modestbranding: 1 },
+        playerVars: { rel: 0, modestbranding: 1, origin: window.location.origin },
+        host: "https://www.youtube-nocookie.com",
         events: { onReady: () => onPlayerReady(playerRef.current) },
       });
     };

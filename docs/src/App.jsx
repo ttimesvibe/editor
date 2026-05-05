@@ -430,8 +430,15 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             // v2 메타만 — 탭 데이터 추가 로드
             setFn(data.fn || "");
             setProg({p:40,l:"탭 데이터 불러오는 중..."});
-            const tabs = ["correction","guide","highlight","visual","modify","setgen","review","manuscript"];
-            const results = await Promise.allSettled(tabs.map(t => apiLoadTab(sid, t, cfg)));
+            // CMS v2 — meta.stages 기반 조건부 load (404 다발 제거)
+            // 이전: 8 탭 일괄 load → 빈 탭 404 다수 (console noise)
+            // 변경: meta.stages 의 키만 load → 404 0건
+            const ALL_TABS = ["correction","guide","highlight","visual","modify","setgen","review","manuscript"];
+            const stages = data.stages || {};
+            const tabs = ALL_TABS.filter(t => stages[t]);
+            const results = tabs.length > 0
+              ? await Promise.allSettled(tabs.map(t => apiLoadTab(sid, t, cfg)))
+              : [];
             const td = {};
             results.forEach((r, i) => {
               if (r.status === "fulfilled" && r.value) {
@@ -904,7 +911,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     // exportCache에 빠진 탭 데이터가 있으면 KV에서 가져옴
     let cache = { ...exportCache };
     if (sessionId && cfg?.workerUrl) {
-      const missing = ["visual", "highlight", "setgen", "modify"].filter(t => !cache[t]);
+      // CMS v2 — meta.stages 기반 조건부 load (404 다발 제거)
+      let stages = {};
+      try {
+        const meta = await apiLoadMeta(sessionId, cfg);
+        stages = meta?.stages || {};
+      } catch {}
+      const candidates = ["visual", "highlight", "setgen", "modify"].filter(t => !cache[t]);
+      const missing = candidates.filter(t => stages[t]);
       if (missing.length > 0) {
         const results = await Promise.allSettled(
           missing.map(t => apiLoadTab(sessionId, t, cfg))
