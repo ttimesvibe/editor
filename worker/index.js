@@ -538,9 +538,11 @@ async function handleSave(body, env, headers) {
     } catch { meta = {}; }
     if (!meta.sessionId) meta.sessionId = id;
     if (!meta.createdAt) meta.createdAt = savedAt;
+    // CMS v2 — P-2: creator 박제 (신규 프로젝트 첫 저장자)
+    if (!meta.creator && body.user) meta.creator = { sub: body.user.sub, name: body.user.name, at: savedAt };
     meta.updatedAt = savedAt;
-    meta.updatedBy = "editor";
-    meta.schemaVersion = "1.0";
+    meta.updatedBy = body.user ? { sub: body.user.sub, name: body.user.name, at: savedAt } : "editor";
+    meta.schemaVersion = "2.0";
     if (body.fn) meta.fn = body.fn;
     if (!meta.stages) meta.stages = {};
     meta.stages[tab] = { status: body.status || "완료", updatedAt: savedAt };
