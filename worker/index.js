@@ -409,6 +409,45 @@ if (path === "/debug-location") {
 // /save, /load
 // ═══════════════════════════════════════
 
+// CMS v2 — D6-7: session_index race 완화 (read-after-write verify + array_id_union 재시도)
+// KV eventual consistency 의 race 를 완벽 해결할 순 없으나 race 빈도 크게 감소.
+async function updateSessionIndex(env, entry) {
+  const warnings = [];
+  try {
+    // 1차: GET → upsert → PUT
+    const before = await env.SESSIONS.get("session_index");
+    const beforeIndex = before ? JSON.parse(before) : [];
+    const existIdx = beforeIndex.findIndex(s => s.id === entry.id);
+    if (existIdx >= 0) beforeIndex[existIdx] = { ...beforeIndex[existIdx], ...entry };
+    else beforeIndex.unshift(entry);
+    const serialized = JSON.stringify(beforeIndex);
+    if (serialized.length > 900000) {
+      warnings.push("session_index size approaching 1MB limit");
+      console.warn("[kv-index] session_index size:", serialized.length);
+    }
+    await env.SESSIONS.put("session_index", serialized);
+
+    // 2차: read-after-write — 다른 worker instance 가 추가한 entry 가 잘렸을 수 있음
+    const after = await env.SESSIONS.get("session_index");
+    const afterIndex = after ? JSON.parse(after) : [];
+    // 본 instance 가 알고 있는 entry 중 afterIndex 에 없는 것 (다른 instance 가 덮어쓰면서 잘림)
+    const lost = beforeIndex.filter(b => !afterIndex.find(a => a.id === b.id));
+    if (lost.length > 0) {
+      // array_id_union 재적용
+      const merged = [...afterIndex];
+      for (const l of lost) {
+        if (!merged.find(m => m.id === l.id)) merged.unshift(l);
+      }
+      await env.SESSIONS.put("session_index", JSON.stringify(merged));
+      console.log(`[kv-index] race recovered: ${lost.length} entries restored`);
+    }
+  } catch (e) {
+    console.error("[kv-index] session_index update failed:", e.message);
+    warnings.push("session_index update failed");
+  }
+  return { warnings: warnings.length > 0 ? warnings : null };
+}
+
 // CMS v2 — 입력 검증 (E4, E5, 묶음 ⑩) + deleted head check (B11, 묶음 ④)
 const VALID_TAB_KEYS = new Set(["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"]);
 // 세션 ID = 영숫자만, 4~24자 (실제 생성 5~10자 + 기존 12~13자 ID 호환).
@@ -507,26 +546,11 @@ async function handleSave(body, env, headers) {
     meta.stages[tab] = { status: body.status || "완료", updatedAt: savedAt };
     await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify(meta), { expirationTtl: 60*60*24*365 });
 
-    // 세션 인덱스 업데이트 (CMS v2 — cap 제거, 묶음 ⑧)
+    // 세션 인덱스 업데이트 (CMS v2 — cap 제거 + D6-7 array_id_union read-after-write)
     const warnings = [];
-    try {
-      const indexData = await env.SESSIONS.get("session_index");
-      const index = indexData ? JSON.parse(indexData) : [];
-      const existing = index.findIndex(s => s.id === id);
-      const entry = { id, fn: meta.fn || body.fn || "제목 없음", savedAt, tab, schema: "v2" };
-      if (existing >= 0) index[existing] = { ...index[existing], ...entry };
-      else index.unshift(entry);
-      // CMS v2 — cap 제거 (묶음 ⑧). 단일 키 1MB 초과 모니터링.
-      const serialized = JSON.stringify(index);
-      if (serialized.length > 900000) {
-        warnings.push("session_index size approaching 1MB limit");
-        console.warn("[kv-index] session_index size:", serialized.length);
-      }
-      await env.SESSIONS.put("session_index", serialized);
-    } catch (e) {
-      console.error("[kv-index] session_index update failed:", e.message);
-      warnings.push("session_index update failed");
-    }
+    const entry = { id, fn: meta.fn || body.fn || "제목 없음", savedAt, tab, schema: "v2" };
+    const idxResult = await updateSessionIndex(env, entry);
+    if (idxResult.warnings) warnings.push(...idxResult.warnings);
 
     // ── modify 탭 저장 시 videoUrl이 있으면 자동으로 post-production으로 이동 ──
     if (tab === "modify" && data && data.videoUrl) {
