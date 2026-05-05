@@ -555,6 +555,29 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     if (exportCache.highlight) dirtyTabs.current.add("highlight");
   }, [exportCache.highlight]);
 
+  // CMS v2 — 묶음 ⑤ G2: 11 탭 dirty 추적 확장 (visual/setgen/modify/metadata)
+  // 자식 컴포넌트의 onSave 콜백이 setExportCache 만 갱신 → 본 useEffect 가 dirty 자동 add
+  // 실 저장은 [💾 저장] 클릭 시 saveDirtyTabsToKV 가 모아서 한 번에 (v2 가드 통과)
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    if (exportCache.visual) dirtyTabs.current.add("visual");
+  }, [exportCache.visual]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    if (exportCache.setgen) dirtyTabs.current.add("setgen");
+  }, [exportCache.setgen]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    if (exportCache.modify) dirtyTabs.current.add("modify");
+  }, [exportCache.modify]);
+
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    if (exportCache.metadata) dirtyTabs.current.add("metadata");
+  }, [exportCache.metadata]);
+
   // sync scroll — 1차 교정 탭에서만 연동 (편집 가이드는 독립 스크롤)
   const onScroll = useCallback(src => {
     if (tab !== "correction") return; // 편집 가이드 탭에서는 연동 안 함
@@ -641,27 +664,28 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       baseVersion: lastLoadedVersion.current[tab],
       force: !!opts.force,
     });
-    if (dirty.has("correction")) {
-      const d = overrides.correction || { blocks, anal, diffs, scriptEdits, blockDeletions };
-      payloads.correction = d; tabsToSave.push("correction");
-      saves.push(apiSaveTab(id, "correction", d, cfg, fn, optsFor("correction")));
-    }
-    if (dirty.has("review")) {
-      const d = overrides.review || reviewData || {};
-      payloads.review = d; tabsToSave.push("review");
-      saves.push(apiSaveTab(id, "review", d, cfg, fn, optsFor("review")));
-    }
-    if (dirty.has("guide")) {
-      const d = overrides.guide || { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
-      payloads.guide = d; tabsToSave.push("guide");
-      saves.push(apiSaveTab(id, "guide", d, cfg, fn, optsFor("guide")));
-    }
-    if (dirty.has("highlight")) {
-      const d = overrides.highlight || exportCache.highlight;
-      if (d) {
-        payloads.highlight = d; tabsToSave.push("highlight");
-        saves.push(apiSaveTab(id, "highlight", d, cfg, fn, optsFor("highlight")));
-      }
+
+    // CMS v2 — 묶음 ⑤ G2 + G7: 11 탭 dispatch table
+    // 모든 탭이 동일한 v2 가드 (충돌 감지 / 모달 / 4중 백업 / 토스트) 통과
+    const SAVE_DISPATCH = {
+      correction: () => ({ blocks, anal, diffs, scriptEdits, blockDeletions }),
+      review:     () => reviewData || {},
+      guide:      () => ({ hl, hlStats, hlVerdicts, hlEdits, hlMarkers }),
+      highlight:  () => exportCache.highlight,
+      visual:     () => exportCache.visual,
+      setgen:     () => exportCache.setgen,
+      modify:     () => exportCache.modify,
+      metadata:   () => exportCache.metadata,
+      manuscript: () => exportCache.manuscript,
+      subtitle:   () => exportCache.subtitle,
+    };
+
+    for (const t of dirty) {
+      const data = overrides[t] !== undefined ? overrides[t] : SAVE_DISPATCH[t]?.();
+      if (!data) continue; // 데이터 없으면 skip (예: highlight 의 exportCache 미설정)
+      payloads[t] = data;
+      tabsToSave.push(t);
+      saves.push(apiSaveTab(id, t, data, cfg, fn, optsFor(t)));
     }
     if (saves.length === 0) return;
 
@@ -994,7 +1018,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           speakers: a.speakers || [],
           genre: a.genre || null,
         };
-        apiSaveTab(sessionIdRef.current, "metadata", metadata, cfg, fn).catch(() => {});
+        // CMS v2 — metadata 도 saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업)
+        setExportCache(prev => ({ ...prev, metadata }));
+        dirtyTabs.current.add("metadata");
+        saveDirtyTabsToKV(sessionIdRef.current, { metadata }).catch(() => {});
       }
       const newTerms = a.term_corrections || [];
       // Step 0 term_corrections 중 단어장에 이미 있는 항목 제외
@@ -2467,8 +2494,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           onSave={async (data) => {
             setExportCache(prev => ({ ...prev, setgen: data }));
             if (!sessionId) return;
-            try { await apiSaveTab(sessionId, "setgen", data, cfg, fn); }
-            catch (e) { console.error("세트 저장 실패:", e); setErr("세트 저장 실패: " + e.message); throw e; }
+            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
+            dirtyTabs.current.add("setgen");
+            try { await saveDirtyTabsToKV(sessionId, { setgen: data }); }
+            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] setgen failed:", e?.message); setErr("세트 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
@@ -2485,8 +2514,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           onSave={async (data) => {
             setExportCache(prev => ({ ...prev, visual: data }));
             if (!sessionId) return;
-            try { await apiSaveTab(sessionId, "visual", data, cfg, fn); }
-            catch (e) { console.error("자료·그래픽 저장 실패:", e); setErr("자료·그래픽 저장 실패: " + e.message); throw e; }
+            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
+            dirtyTabs.current.add("visual");
+            try { await saveDirtyTabsToKV(sessionId, { visual: data }); }
+            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] visual failed:", e?.message); setErr("자료·그래픽 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
@@ -2502,8 +2533,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           onSave={async (data) => {
             setExportCache(prev => ({ ...prev, modify: data }));
             if (!sessionId) return;
-            try { await apiSaveTab(sessionId, "modify", data, cfg, fn); }
-            catch (e) { console.error("수정사항 저장 실패:", e); setErr("수정사항 저장 실패: " + e.message); throw e; }
+            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
+            dirtyTabs.current.add("modify");
+            try { await saveDirtyTabsToKV(sessionId, { modify: data }); }
+            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] modify failed:", e?.message); setErr("수정사항 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
