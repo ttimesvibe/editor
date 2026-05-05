@@ -523,14 +523,11 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
     return () => { cancelled = true; clearTimeout(t); };
   }, [sessionId, config, loaded]);
 
-  // ── 디바운스 자동저장 (3분 — KV 쓰기 한도 절약) ──
+  // CMS v2 — 자식 → 부모 즉시 onSave (디바운스 X). 부모(App.jsx) 가 KV PUT 디바운스 30초 처리.
+  // 이전 결함: 자식 3분 디바운스 → 사용자 [💾 저장] 클릭 시 부모 exportCache.visual 미박힘 → visual 저장 누락.
   useEffect(() => {
     if (visualGuides.length === 0 && insertCuts.length === 0 && manualResources.length === 0) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      onSave?.({ visualGuides, insertCuts, verdicts, manualResources, visualMarkers, savedAt: new Date().toISOString() });
-    }, 3 * 60 * 1000);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    onSave?.({ visualGuides, insertCuts, verdicts, manualResources, visualMarkers, savedAt: new Date().toISOString() });
   }, [visualGuides, insertCuts, verdicts, manualResources, visualMarkers, onSave]);
 
   // ── 텍스트 선택 감지 ──

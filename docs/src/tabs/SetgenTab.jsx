@@ -94,15 +94,10 @@ export function SetgenTab({ script, blocks, guestName, guestTitle, sessionId, co
     prevTabRef.current = currentTab;
   }, [currentTab]);
 
-  // 자동 저장
-  const saveTimer = useRef(null);
+  // CMS v2 — 자식 → 부모 즉시 onSave (디바운스 X). 부모가 KV PUT 디바운스 처리.
   useEffect(() => {
     if (!onSave || !result) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      onSave({ result, trendData, trendingNow, keywords, selections: sel, edits, focusKeyword: focusKw, timestamps, savedAt: new Date().toISOString() });
-    }, 3 * 60 * 1000);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    onSave({ result, trendData, trendingNow, keywords, selections: sel, edits, focusKeyword: focusKw, timestamps, savedAt: new Date().toISOString() });
   }, [result, sel, edits, timestamps]);
 
   const scriptBlocks = blocks?.length > 0 ? blocks : (() => {

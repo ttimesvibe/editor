@@ -415,12 +415,8 @@ export function ModifyTab({ sessionId, config, onSave, currentTab, initialData, 
     if (!cards.length && !videoId) return;
     const snap = JSON.stringify(cards);
     if (snap === lastSnapshot.current) return;
-    setAutoSaveStatus("⏳ 대기");
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      saveNow(cards);
-    }, 3 * 60 * 1000);
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    // CMS v2 — 자식 → 부모 즉시 onSave (디바운스 X). 부모가 KV PUT 디바운스 처리.
+    saveNow(cards);
   }, [cards, title]);
 
   const saveNow = useCallback(async (cardsToSave) => {

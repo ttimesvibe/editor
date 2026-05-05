@@ -531,7 +531,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           }
           setProg({p:100,l:"✅ 세션 로드 완료"});
         } catch (e) { setErr(e.message); }
-        finally { setBusy(false); setTimeout(() => { isInitialLoad.current = false; }, 0); }
+        finally { setBusy(false); setTimeout(() => { isInitialLoad.current = false; }, 500); /* CMS v2: 500ms — setBlocks/setHl 등 dirty add useEffect 모두 fire 후 false (이전 0ms 는 race 로 자동 dirty 누적) */ }
       })();
     } else {
       try {
@@ -548,7 +548,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           }
         }
       } catch {}
-      setTimeout(() => { isInitialLoad.current = false; }, 0);
+      setTimeout(() => { isInitialLoad.current = false; }, 500); /* CMS v2: 500ms — setBlocks/setHl 등 dirty add useEffect 모두 fire 후 false (이전 0ms 는 race 로 자동 dirty 누적) */
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2531,13 +2531,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           keywords={anal?.overview?.keywords || []}
           currentTab={tab}
           initialData={exportCache.setgen}
-          onSave={async (data) => {
+          onSave={(data) => {
+            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
             setExportCache(prev => ({ ...prev, setgen: data }));
-            if (!sessionId) return;
-            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
             dirtyTabs.current.add("setgen");
-            try { await saveDirtyTabsToKV(sessionId, { setgen: data }); }
-            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] setgen failed:", e?.message); setErr("세트 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
@@ -2551,13 +2548,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           config={cfg}
           currentTab={tab}
           initialData={exportCache.visual}
-          onSave={async (data) => {
+          onSave={(data) => {
+            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
             setExportCache(prev => ({ ...prev, visual: data }));
-            if (!sessionId) return;
-            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
             dirtyTabs.current.add("visual");
-            try { await saveDirtyTabsToKV(sessionId, { visual: data }); }
-            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] visual failed:", e?.message); setErr("자료·그래픽 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
@@ -2570,13 +2564,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           currentTab={tab}
           initialData={exportCache.modify}
           authUser={authUser}
-          onSave={async (data) => {
+          onSave={(data) => {
+            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
             setExportCache(prev => ({ ...prev, modify: data }));
-            if (!sessionId) return;
-            // CMS v2 — saveDirtyTabsToKV 통과 (충돌 감지/모달/4중 백업/토스트)
             dirtyTabs.current.add("modify");
-            try { await saveDirtyTabsToKV(sessionId, { modify: data }); }
-            catch (e) { if (!e.failed && !e.conflicts) { console.error("[save-flow] modify failed:", e?.message); setErr("수정사항 저장 실패: " + (e?.message || "")); } throw e; }
           }}
         />
       </div>}
