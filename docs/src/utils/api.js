@@ -81,10 +81,13 @@ function getWorkerBase(config) {
 export async function apiSaveSession(sessionData, config) {
   const base = getWorkerBase(config);
   if (!base) throw new Error("Worker URL이 설정되지 않았습니다.");
+  // CMS v2 — N5: user 객체 전송 (apiSaveTab 동일 패턴, D6-8 일관)
+  const user = _currentUser();
+  const body = user ? { ...sessionData, user } : sessionData;
   const r = await fetch(`${base}/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(sessionData),
+    body: JSON.stringify(body),
   });
   handle401(r);
   const d = await r.json();

@@ -7,11 +7,36 @@
 
 const BACKUP_KEY_PREFIX = "te_backup_";
 
+// CMS v2 — N2 (W-2): type 별 보관 정책
+//   - save_failure / conflict / deleted_restore: 무제한 (D2 결정)
+//   - manuscript_replace: 5개 cap (W-2 결정, D2 와 분리)
+const TYPE_CAPS = { manuscript_replace: 5 };
+
+function pruneByType(type, maxCount) {
+  const prefix = `${BACKUP_KEY_PREFIX}${type}_`;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(prefix)) keys.push(k);
+  }
+  keys.sort(); // 오래된 순 (timestamp 포함 키)
+  while (keys.length >= maxCount) {
+    const oldest = keys.shift();
+    localStorage.removeItem(oldest);
+    console.log(`[backup] cap 초과 정리: ${oldest}`);
+  }
+}
+
 /**
  * type ∈ {"save_failure", "conflict", "manuscript_replace", "deleted_restore"}
- * 무제한 보관 (사용자 결정).
+ * - 기본: 무제한 보관 (D2)
+ * - manuscript_replace: 5개 cap (FIFO, W-2)
  */
 export function createEmergencyBackup({ type, sessionId, fn, payload, reason }) {
+  // CMS v2 — N2: type 별 cap 적용 (cap 있는 type 만)
+  const cap = TYPE_CAPS[type];
+  if (cap) pruneByType(type, cap);
+
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const key = `${BACKUP_KEY_PREFIX}${type}_${sessionId}_${ts}`;
   const data = {
@@ -26,7 +51,6 @@ export function createEmergencyBackup({ type, sessionId, fn, payload, reason }) 
     localStorage.setItem(key, JSON.stringify(data));
     return { ok: true, key };
   } catch (e) {
-    // localStorage 가득 참
     console.error("[backup] localStorage write failed:", e?.message || e);
     return { ok: false, error: e?.message || "localStorage full", key };
   }

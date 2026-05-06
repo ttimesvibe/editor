@@ -482,6 +482,14 @@ async function handleSave(body, env, headers) {
     // 머지 (B1) — body.force 면 머지 skip 통째 덮어쓰기
     const merged = body.force ? cleanData : mergeTabData(existing || {}, cleanData, tab);
 
+    // CMS v2 — N6 (B10): 머지 발생 여부 판정 (응답에 merged/mergedBy 박제)
+    // 5조건: !force && existing 있음 && existing.updatedBy 객체 && body.user 있음 && 마지막 수정자가 다른 user
+    const wasMerged = !body.force
+      && !!existing
+      && existing.updatedBy && typeof existing.updatedBy === "object" && existing.updatedBy.sub
+      && body.user && body.user.sub
+      && existing.updatedBy.sub !== body.user.sub;
+
     // 무결성 검증 (B6)
     const violations = validateMergeResult(existing, merged, tab);
     if (violations.length > 0) {
@@ -537,8 +545,13 @@ async function handleSave(body, env, headers) {
       }
     }
 
-    // CMS v2 — 응답 표준 {success, id, warnings?, savedAt, version} (묶음 ⑦)
-    const resp = { success: true, id, savedAt };
+    // CMS v2 — 응답 표준 {success, id, savedAt, version, merged?, mergedBy?, warnings?}
+    const resp = { success: true, id, savedAt, version: newVersion };
+    // N6 (B10): 머지 발생 시 merged/mergedBy 박제 → 클라 토스트 트리거
+    if (wasMerged) {
+      resp.merged = true;
+      resp.mergedBy = existing.updatedBy;
+    }
     if (warnings.length > 0) resp.warnings = warnings;
     return new Response(JSON.stringify(resp), { headers });
   }
@@ -658,6 +671,8 @@ async function handleAutoSave(body, env, headers) {
     } catch { meta = {}; }
     if (!meta.sessionId) meta.sessionId = id;
     if (!meta.createdAt) meta.createdAt = savedAt;
+    // CMS v2 — N1 (P-2 일관): handleAutoSave 도 creator 박제
+    if (!meta.creator && body.user) meta.creator = { sub: body.user.sub, name: body.user.name, at: savedAt };
     meta.updatedAt = savedAt;
     if (body.user) meta.updatedBy = { sub: body.user.sub, name: body.user.name, at: savedAt };
     if (body.fn) meta.fn = body.fn;
@@ -1046,6 +1061,7 @@ async function handleProjectTrash(user, env, headers) {
         id: p.id, fn: p.fn, creator: p.creator, creatorEmail: p.creatorEmail,
         editors: p.editors, deletedAt: p.deletedAt, deletedBy: p.deletedBy,
         daysInTrash,
+        purgeEligibleAt: p.purgeEligibleAt, // CMS v2 — N3 (K-3): 클라가 "30일 후 자동 삭제" 안내
         parentShootId: p.parentShootId,
       };
     })
@@ -1170,6 +1186,8 @@ async function handleProjectTrashPurge(body, user, env, headers) {
     await env.SESSIONS.delete(p.id); deletedKeys.push(p.id);
     await env.SESSIONS.delete(`save_${p.id}`); deletedKeys.push(`save_${p.id}`);
     await env.SESSIONS.delete(`auto_${p.id}`); deletedKeys.push(`auto_${p.id}`);
+    // CMS v2 — N8: active:{id} 도 명시 정리 (handleSessionDelete 와 일관성)
+    await env.SESSIONS.delete(ACTIVE_KEY(p.id)); deletedKeys.push(ACTIVE_KEY(p.id));
     // s:<id>:img:* 동적 키까지 prefix list 로 훑어 삭제
     let cursor = undefined;
     do {
@@ -1545,6 +1563,9 @@ async function handleShootUpdate(body, env, headers) {
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
 
+  // CMS v2 — N7 (E3): 외부 호출 실패 warnings 누적
+  const _shootWarnings = [];
+
   const raw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
   const index = raw ? JSON.parse(raw) : [];
   const idx = index.findIndex(s => s.id === id);
@@ -1598,6 +1619,7 @@ async function handleShootUpdate(body, env, headers) {
         console.log("[shoot update] Apps Script response:", updateText.slice(0, 200));
       } catch (err) {
         console.error("[apps-script] updateEvent failed:", err.message);
+        _shootWarnings.push("calendar update failed");
       }
     }
   }
@@ -1656,6 +1678,7 @@ async function handleShootUpdate(body, env, headers) {
       }
     } catch (err) {
       console.error("[apps-script] date-change email failed:", err.message);
+      _shootWarnings.push("date-change email failed");
     }
   }
 
@@ -1712,6 +1735,7 @@ async function handleShootUpdate(body, env, headers) {
         });
       } catch (err) {
         console.error("[apps-script] addGuests failed:", err);
+        _shootWarnings.push("addGuests failed");
       }
     }
 
@@ -1726,6 +1750,7 @@ async function handleShootUpdate(body, env, headers) {
         });
       } catch (err) {
         console.error("[apps-script] removeGuests failed:", err);
+        _shootWarnings.push("removeGuests failed");
       }
     }
 
@@ -1774,17 +1799,24 @@ async function handleShootUpdate(body, env, headers) {
         });
       } catch (err) {
         console.error("[apps-script] update email failed:", err);
+        _shootWarnings.push("update email failed");
       }
     }
   }
 
-  return new Response(JSON.stringify({ success: true }), { headers });
+  // CMS v2 — N7: 외부 호출 warnings 응답에 노출
+  const resp = { success: true };
+  if (_shootWarnings.length > 0) resp.warnings = _shootWarnings;
+  return new Response(JSON.stringify(resp), { headers });
 }
 
 async function handleShootDelete(body, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
   const { id } = body;
   if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
+
+  // CMS v2 — N7 (E3): 외부 호출 실패 warnings 누적
+  const _shootWarnings = [];
 
   // shoot_index에서 제거 (+ calendarEventId 확보)
   const raw = await env.SESSIONS.get(SHOOT_INDEX_KEY);
@@ -1813,6 +1845,7 @@ async function handleShootDelete(body, env, headers) {
       });
     } catch (err) {
       console.error("[apps-script] deleteEvent failed:", err);
+      _shootWarnings.push("calendar delete failed");
     }
   }
 
@@ -1866,10 +1899,14 @@ async function handleShootDelete(body, env, headers) {
       }
     } catch (err) {
       console.error("[apps-script] cancel email failed:", err.message);
+      _shootWarnings.push("cancel email failed");
     }
   }
 
-  return new Response(JSON.stringify({ success: true }), { headers });
+  // CMS v2 — N7: 외부 호출 warnings 응답에 노출
+  const resp = { success: true };
+  if (_shootWarnings.length > 0) resp.warnings = _shootWarnings;
+  return new Response(JSON.stringify(resp), { headers });
 }
 
 async function handleShootMoveStage(body, env, headers) {
@@ -3165,7 +3202,7 @@ function fixQuotesV2(lines) {
 
 const SUBTITLE_FORMAT_PROMPT_V3 = `<role>
 You are a Korean subtitle line-break formatter. Your job is to split Korean interview transcripts into subtitle lines that viewers can read at a glance. You must maintain consistent quality from the first line to the last, regardless of input length.
-</role>
+</role>${PROMPT_INJECTION_GUARD}
 
 <hard_rules>
 These rules apply to EVERY line with NO exceptions:
