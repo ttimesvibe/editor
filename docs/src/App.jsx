@@ -299,53 +299,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
   const isInitialLoad = useRef(true); // 초기 로드 중에는 dirty 마킹 안 함
 
-  // ── R1 — 11 탭 단일 store (derived state) — 헌장 §5/§6 정식 충족 prep ──
-  // 본 store 는 R1 시점에 derived (부모 탭의 useState 들 + 자식 탭의 exportCache 의 결합).
-  // R3 시점에 부모 state 폐기 + tabData 가 진짜 source of truth 로 변환됨.
-  // 본 단계 (R1) 에선 사용 X (라이브 영향 0). R2.a~d 의 컴포넌트 추출 + R3 폐기 시점에 사용 시작.
-  //
-  // 헌장 §5 (11 탭 동등): tabData[tabId] 가 단일 형식 → 모든 탭 동등 read/write.
-  // 헌장 §6 (부모/자식 카테고리 거부): 외부에서 부모/자식 구분 불가능 — 모두 tabData[tabId] 키.
-  // 미래 변경 시 utils/tabSchemas.js 의 TAB_SCHEMAS 가 단일 진실.
-  // eslint-disable-next-line no-unused-vars
-  const tabData = useMemo(() => ({
-    review:     pickFields("review",     { reviewData }),
-    correction: pickFields("correction", { blocks, anal, diffs, scriptEdits, blockDeletions }),
-    script:     pickFields("script",     { blocks, scriptEdits }),
-    guide:      pickFields("guide",      { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }),
-    highlight:  exportCache.highlight  || {},
-    setgen:     exportCache.setgen     || {},
-    visual:     exportCache.visual     || {},
-    modify:     exportCache.modify     || {},
-    metadata:   exportCache.metadata   || {},
-    manuscript: exportCache.manuscript || {},
-    subtitle:   exportCache.subtitle   || {},
-  }), [
-    reviewData,
-    blocks, anal, diffs, scriptEdits, blockDeletions,
-    hl, hlStats, hlVerdicts, hlEdits, hlMarkers,
-    exportCache,
-  ]);
-
   // ─────────────────────────────────────────────────────────────────────────
-  // R3.d.1 — tabDataRef (단일 ref source for SAVE_DISPATCH)
+  // R3.d.2.d — tabDataState 단일 source of truth (헌장 §5/§6 정식 충족)
   // ─────────────────────────────────────────────────────────────────────────
-  // 결함 A 해소: SAVE_DISPATCH 의 closure capture stale 영역 차단.
-  // saveDirtyTabsToKV 가 tabDataRef.current 직접 read → 항상 최신.
-  // useEffect 로 동기 (1 frame 지연이지만 30s timer 영역에서 무관).
-  // ───────────────────────────────────────────────────────────────────────────
-  const tabDataRef = useRef({});
-  useEffect(() => { tabDataRef.current = tabData; }, [tabData]);
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // R3.d.2.a — tabDataState 단일 store (additive, dual-write 토대)
-  // ─────────────────────────────────────────────────────────────────────────
-  // 단계별 plan: .a 단계는 신설만 (사용 X) + patchTab dual-write 토대.
-  // 후속 단계 (.b ~ .f) 에서 saveDirtyTabsToKV / useEffect deps / useState 폐기 점진 이행.
-  // 헌장 §5/§6 정식 충족 토대 — 11 탭 동등 단일 store.
+  // 11 탭 동등 단일 store. fully-initialized 초기 영역 — derived const 의 reference 안정 보장.
+  // R3.d.2.a 신설 → R3.d.2.d 단일 source 정식.
   // ───────────────────────────────────────────────────────────────────────────
   const [tabDataState, setTabDataState] = useState(() => ({
-    // R3.d.2.d — 모든 영역 fully-initialized (derived const 영역의 새 reference 회피 — 안정 영역)
     review:     { reviewData: null },
     correction: { blocks: [], anal: null, diffs: [], scriptEdits: {}, blockDeletions: {} },
     script:     { blocks: [], scriptEdits: {} },
@@ -358,9 +318,30 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     manuscript: {},
     subtitle:   {},
   }));
-  // R3.d.2.d — R3.d.2.b 의 sync useEffect 영역 제거.
-  // 이전: useEffect(() => { setTabDataState(tabData); }, [tabData]);
-  // useState 폐기 후 tabDataState 가 primary → 옛 sync 영역 무한 루프 위험.
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // tabData useMemo — 11 탭 schema 적용 read view (TabComponentInterface 표준)
+  // 헌장 §5/§6 정식 충족.
+  // ───────────────────────────────────────────────────────────────────────────
+  const tabData = useMemo(() => ({
+    review:     pickFields("review",     tabDataState.review     || {}),
+    correction: pickFields("correction", tabDataState.correction || {}),
+    script:     pickFields("script",     tabDataState.correction || {}),  // script ← correction
+    guide:      pickFields("guide",      tabDataState.guide      || {}),
+    highlight:  tabDataState.highlight   || {},
+    setgen:     tabDataState.setgen      || {},
+    visual:     tabDataState.visual      || {},
+    modify:     tabDataState.modify      || {},
+    metadata:   tabDataState.metadata    || {},
+    manuscript: tabDataState.manuscript  || {},
+    subtitle:   tabDataState.subtitle    || {},
+  }), [tabDataState]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // tabDataRef — 호환 layer (R3.d.2.e 영역에서 정리)
+  // ───────────────────────────────────────────────────────────────────────────
+  const tabDataRef = useRef({});
+  useEffect(() => { tabDataRef.current = tabData; }, [tabData]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // R3.d.2.d — 12 useState 폐기 후 derived const + setter wrapper.
