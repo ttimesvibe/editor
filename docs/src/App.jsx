@@ -5,7 +5,7 @@ import * as mammoth from "mammoth";
 import { loadConfig, saveConfig } from "./utils/config.js";
 import { loadDictionary, syncDictionaryFromServer, updateDictionary } from "./utils/dictionary.js";
 import { delay, apiCall, apiSaveSession, apiLoadSession, apiAnalyze, apiCorrect, apiHighlightsDraft, apiHighlightsEdit, apiSaveTab, apiLoadMeta, apiLoadTab, apiProjectUpdateStep, apiHeartbeat, apiLeave } from "./utils/api.js";
-import { createEmergencyBackup, getLatestBackup, listBackups, autoRetry } from "./utils/backup.js";
+import { createEmergencyBackup, getLatestBackup, listBackups, deleteBackup, autoRetry } from "./utils/backup.js";
 import { SaveFailModal, ConflictModal, RestoreModal, BackupListModal } from "./components/v2_modals.jsx";
 import { mergeTabData as clientMergeTabData } from "./utils/clientMerge.js";
 import { tabLabel } from "./utils/errorMessages.js";
@@ -887,7 +887,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     if (failed.length > 0) {
       // 2차 백업 (localStorage 자동) — 모달 노출 전 즉시
       for (const f of failed) {
-        createEmergencyBackup({ type: "save_failure", sessionId: id, fn, payload: f.payload, reason: f.error?.message || "save failed" });
+        createEmergencyBackup({ type: "save_failure", sessionId: id, fn, tab: f.tab, payload: f.payload, reason: f.error?.message || "save failed" });
       }
       if (opts.manual) {
         // 수동 저장 → 모달
@@ -913,12 +913,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     // 충돌 처리 (B3) — 묶음 ⑫ Phase 1
     if (conflicts.length > 0) {
       for (const c of conflicts) {
-        createEmergencyBackup({ type: "conflict", sessionId: id, fn, payload: c.payload, reason: "conflict 409" });
+        createEmergencyBackup({ type: "conflict", sessionId: id, fn, tab: c.tab, payload: c.payload, reason: "conflict 409" });
       }
       // 첫 충돌만 모달 (다중 충돌 시 한 번에 한 탭)
       const c = conflicts[0];
       const applyServerToState = (tab, serverData) => {
-        // 서버 데이터로 React state 갱신 (탭 별)
+        // R3.e — 11 탭 동등 dispatch (헌장 §5 코드 평탄화 #3 / N1 결함 해소).
+        // 이전 결함: 자식 7 탭 (highlight/setgen/visual/modify/metadata/manuscript/subtitle)
+        //           영역 누락 → ConflictModal 자동 머지 시 자식 탭 React state 미갱신.
         if (tab === "correction") {
           if (serverData.blocks) setBlocks(serverData.blocks);
           if (serverData.anal !== undefined) setAnal(serverData.anal);
@@ -933,6 +935,9 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           if (serverData.hlVerdicts !== undefined) setHlVerdicts(serverData.hlVerdicts || {});
           if (serverData.hlEdits !== undefined) setHlEdits(serverData.hlEdits || {});
           if (serverData.hlMarkers !== undefined) setHlMarkers(serverData.hlMarkers || {});
+        } else if (tab === "highlight" || tab === "setgen" || tab === "visual" || tab === "modify" || tab === "metadata" || tab === "manuscript" || tab === "subtitle") {
+          // 자식 7 탭 — exportCache 통일 갱신 (헌장 §6 부모/자식 X)
+          setExportCache(prev => ({ ...prev, [tab]: serverData }));
         }
         if (serverData.savedAt) lastLoadedAt.current[tab] = serverData.savedAt;
         if (serverData.version !== undefined) lastLoadedVersion.current[tab] = serverData.version;
@@ -2002,22 +2007,52 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       totalCount={restoreModal.totalCount}
       onRestore={() => {
         try {
-          const data = restoreModal.backup.data || {};
-          if (data.blocks) setBlocks(data.blocks);
-          if (data.anal) setAnal(data.anal);
-          if (data.diffs) setDiffs(data.diffs);
-          if (data.hl) setHl(data.hl);
-          if (data.hlStats) setHlStats(data.hlStats);
-          if (data.hlVerdicts) setHlVerdicts(data.hlVerdicts);
-          if (data.hlEdits) setHlEdits(data.hlEdits);
-          if (data.hlMarkers) setHlMarkers(data.hlMarkers);
-          if (data.scriptEdits) setScriptEdits(data.scriptEdits);
-          if (data.blockDeletions) setBlockDeletions(data.blockDeletions);
-          if (data.reviewData) setReviewData(data.reviewData);
-          if (restoreModal.backup.fn) setFn(restoreModal.backup.fn);
-          if (restoreModal.backup.sessionId) {
-            setSessionId(restoreModal.backup.sessionId);
-            sessionIdRef.current = restoreModal.backup.sessionId;
+          // R3.e — 11 탭 동등 복원 (헌장 §5/§6 / W2 정식 충족)
+          // 이전 결함: 자식 7 탭 (highlight/setgen/visual/modify/metadata/manuscript/subtitle) 영역 누락
+          //           → 사용자가 modify 탭 작업 backup 을 복원해도 modify 영역 미적용 → 데이터 손실 사고.
+          const backup = restoreModal.backup;
+          const payload = backup.data || {};
+          // tab 식별: 신 형식 backup.tab 우선, 옛 형식 backup 은 payload 키 기반 추론 (호환 보존).
+          const inferTab = (d) => {
+            if (!d) return null;
+            if (d.cards !== undefined || d.videoUrl !== undefined) return "modify";
+            if (d.visualGuides !== undefined || d.insertCuts !== undefined) return "visual";
+            if (d.result !== undefined || d.trendData !== undefined) return "setgen";
+            if (d.clips !== undefined || d.recs !== undefined) return "highlight";
+            if (d.blocks !== undefined && (d.diffs !== undefined || d.anal !== undefined)) return "correction";
+            if (d.hl !== undefined || d.hlStats !== undefined) return "guide";
+            if (d.reviewData !== undefined) return "review";
+            return null;
+          };
+          const tabId = backup.tab || inferTab(payload);
+          if (tabId) {
+            // patchTab 단일 진입 (헌장 §5/§6 정식). markDirty=false → 약속 Y (복원이 dirty 만들지 X).
+            patchTab(tabId, payload, { markDirty: false });
+            console.log(`[backup] restored tab=${tabId} from backup key=${backup.key}`);
+          } else {
+            // 옛 형식 fallback — 부모 탭 영역 직접 복원 (호환 보존)
+            console.warn("[backup] cannot infer tab, fallback to legacy parent restore");
+            if (payload.blocks) setBlocks(payload.blocks);
+            if (payload.anal) setAnal(payload.anal);
+            if (payload.diffs) setDiffs(payload.diffs);
+            if (payload.hl) setHl(payload.hl);
+            if (payload.hlStats) setHlStats(payload.hlStats);
+            if (payload.hlVerdicts) setHlVerdicts(payload.hlVerdicts);
+            if (payload.hlEdits) setHlEdits(payload.hlEdits);
+            if (payload.hlMarkers) setHlMarkers(payload.hlMarkers);
+            if (payload.scriptEdits) setScriptEdits(payload.scriptEdits);
+            if (payload.blockDeletions) setBlockDeletions(payload.blockDeletions);
+            if (payload.reviewData) setReviewData(payload.reviewData);
+          }
+          if (backup.fn) setFn(backup.fn);
+          if (backup.sessionId) {
+            setSessionId(backup.sessionId);
+            sessionIdRef.current = backup.sessionId;
+          }
+          // R3.e — 복원된 backup 삭제 (사용자 "같은 팝업 또 출현" 영역 해소)
+          if (backup.key) {
+            deleteBackup(backup.key);
+            console.log(`[backup] deleted restored backup: ${backup.key}`);
           }
           setRestoreModal(null);
         } catch (e) {

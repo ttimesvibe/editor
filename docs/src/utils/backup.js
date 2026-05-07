@@ -32,17 +32,19 @@ function pruneByType(type, maxCount) {
  * - 기본: 무제한 보관 (D2)
  * - manuscript_replace: 5개 cap (FIFO, W-2)
  */
-export function createEmergencyBackup({ type, sessionId, fn, payload, reason }) {
+export function createEmergencyBackup({ type, sessionId, fn, tab, payload, reason }) {
   // CMS v2 — N2: type 별 cap 적용 (cap 있는 type 만)
   const cap = TYPE_CAPS[type];
   if (cap) pruneByType(type, cap);
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const key = `${BACKUP_KEY_PREFIX}${type}_${sessionId}_${ts}`;
+  // R3.e — tab 필드 추가 (W2 호환: 옛 backup 은 tab 영역 X, RestoreModal fallback 추론)
   const data = {
     type,
     sessionId,
     fn,
+    tab: tab || null,
     backupAt: new Date().toISOString(),
     reason,
     data: payload,
