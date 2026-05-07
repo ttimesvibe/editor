@@ -337,11 +337,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     subtitle:   tabDataState.subtitle    || {},
   }), [tabDataState]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // tabDataRef — 호환 layer (R3.d.2.e 영역에서 정리)
-  // ───────────────────────────────────────────────────────────────────────────
-  const tabDataRef = useRef({});
-  useEffect(() => { tabDataRef.current = tabData; }, [tabData]);
+  // R3.d.2.e — 옛 tabDataRef 영역 폐기.
+  // 이전 (R3.d.1): SAVE_DISPATCH 의 closure capture stale 영역 차단용 ref.
+  // R3.d.2.b 후 SAVE_DISPATCH 가 tabDataState 직접 read → ref 영역 사용 0.
+  // 누더기 회피 의무 영역 — 호환 layer 정식 폐기.
 
   // ─────────────────────────────────────────────────────────────────────────
   // R3.d.2.d — 12 useState 폐기 후 derived const + setter wrapper.
