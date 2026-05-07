@@ -667,7 +667,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
   useEffect(() => {
     if (isInitialLoad.current) return;
-    if (exportCache.highlight) dirtyTabs.current.add("highlight");
+    if (exportCache.highlight) { console.log("[r3-diag] dirty add: highlight"); dirtyTabs.current.add("highlight"); }
   }, [exportCache.highlight]);
 
   // CMS v2 — 묶음 ⑤ G2: 11 탭 dirty 추적 확장 (visual/setgen/modify/metadata)
@@ -675,22 +675,22 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // 실 저장은 [💾 저장] 클릭 시 saveDirtyTabsToKV 가 모아서 한 번에 (v2 가드 통과)
   useEffect(() => {
     if (isInitialLoad.current) return;
-    if (exportCache.visual) dirtyTabs.current.add("visual");
+    if (exportCache.visual) { console.log("[r3-diag] dirty add: visual"); dirtyTabs.current.add("visual"); }
   }, [exportCache.visual]);
 
   useEffect(() => {
     if (isInitialLoad.current) return;
-    if (exportCache.setgen) dirtyTabs.current.add("setgen");
+    if (exportCache.setgen) { console.log("[r3-diag] dirty add: setgen"); dirtyTabs.current.add("setgen"); }
   }, [exportCache.setgen]);
 
   useEffect(() => {
     if (isInitialLoad.current) return;
-    if (exportCache.modify) dirtyTabs.current.add("modify");
+    if (exportCache.modify) { console.log("[r3-diag] dirty add: modify"); dirtyTabs.current.add("modify"); }
   }, [exportCache.modify]);
 
   useEffect(() => {
     if (isInitialLoad.current) return;
-    if (exportCache.metadata) dirtyTabs.current.add("metadata");
+    if (exportCache.metadata) { console.log("[r3-diag] dirty add: metadata"); dirtyTabs.current.add("metadata"); }
   }, [exportCache.metadata]);
 
   // sync scroll — 1차 교정 탭에서만 연동 (편집 가이드는 독립 스크롤)
@@ -977,19 +977,22 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
   useEffect(() => {
-    if (cfg.apiMode === "mock" || !cfg.workerUrl) return;
-    if (!blocks || blocks.length === 0) return;
+    console.log("[r3-diag] autoSave useEffect run");
+    if (cfg.apiMode === "mock" || !cfg.workerUrl) { console.log("[r3-diag] autoSave skipped: mock/no-workerUrl"); return; }
+    if (!blocks || blocks.length === 0) { console.log("[r3-diag] autoSave skipped: blocks empty"); return; }
     // R3.b — 자식 탭 (exportCache) 도 변경 감지 영역 포함. 헌장 §5 (11 탭 동등 dirty 감지).
     const currentSnapshot = JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache });
-    if (currentSnapshot === lastSavedSnapshot) return;
+    if (currentSnapshot === lastSavedSnapshot) { console.log("[r3-diag] autoSave skipped: snapshot unchanged"); return; }
 
+    console.log("[r3-diag] autoSave timer scheduled (30s), dirtyTabs=[" + [...dirtyTabs.current].join(",") + "]");
     setAutoSaveStatus("pending");
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
 
     autoSaveTimer.current = setTimeout(async () => {
+      console.log("[r3-diag] autoSave timer FIRED, dirtyTabs=[" + [...dirtyTabs.current].join(",") + "]");
       const curId = sessionIdRef.current;
-      if (!curId) { setAutoSaveStatus(""); return; }
-      if (dirtyTabs.current.size === 0) { setAutoSaveStatus(""); return; }
+      if (!curId) { console.log("[r3-diag] autoSave fire skipped: no sessionId"); setAutoSaveStatus(""); return; }
+      if (dirtyTabs.current.size === 0) { console.log("[r3-diag] autoSave fire skipped: dirty empty"); setAutoSaveStatus(""); return; }
       // CMS v2 — A-1: 락(promise) — 진행 중이면 대기 후 실행
       setAutoSaveStatus("saving");
       try {
@@ -1009,7 +1012,12 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       }
     }, 30 * 1000); // CMS v2: 30초 (묶음 ② A-1, 3분 → 30초)
 
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    return () => {
+      if (autoSaveTimer.current) {
+        console.log("[r3-diag] autoSave cleanup (timer cleared before fire)");
+        clearTimeout(autoSaveTimer.current);
+      }
+    };
     // R3.b — exportCache 추가 (자식 탭 변경 시 useEffect 재실행 → 30s timer fire). 헌장 §5/§3 정합.
   }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache, lastSavedSnapshot, cfg]);
 
@@ -1832,6 +1840,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           currentTab={tab}
           initialData={exportCache.highlight}
           onSave={(data) => {
+            console.log("[r3-diag] highlight onSave called, keys=", data ? Object.keys(data) : "null");
             setExportCache(prev => ({ ...prev, highlight: data }));
           }}
         />
@@ -1851,6 +1860,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           initialData={exportCache.setgen}
           onSave={(data) => {
             // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
+            console.log("[r3-diag] setgen onSave called, keys=", data ? Object.keys(data) : "null");
             setExportCache(prev => ({ ...prev, setgen: data }));
             dirtyTabs.current.add("setgen");
           }}
@@ -1868,6 +1878,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           initialData={exportCache.visual}
           onSave={(data) => {
             // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
+            console.log("[r3-diag] visual onSave called, keys=", data ? Object.keys(data) : "null");
             setExportCache(prev => ({ ...prev, visual: data }));
             dirtyTabs.current.add("visual");
           }}
@@ -1884,6 +1895,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           authUser={authUser}
           onSave={(data) => {
             // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
+            console.log("[r3-diag] modify onSave called, keys=", data ? Object.keys(data) : "null", "items=", data?.modifications?.length);
             setExportCache(prev => ({ ...prev, modify: data }));
             dirtyTabs.current.add("modify");
           }}
