@@ -1017,9 +1017,9 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       err.failed = failed; err.conflicts = conflicts;
       throw err;
     }
-    // R3.d.2.b — tabDataState 단일 source. 옛 영역 (blocks/anal/.../exportCache) 영역은
-    // R3.d.2.d (12 useState 폐기) 에서 제거 — 호환 위해 deps 영역 유지.
-  }, [tabDataState, blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, cfg, fn, authUser]);
+    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source (내부 직접 read 영역 0).
+    // 헌장 §5 (11 탭 동등 dispatch) 정합.
+  }, [tabDataState, cfg, fn, authUser]);
 
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   // overrideData: setState 직후 아직 렌더링 전일 때 최신 데이터를 직접 전달
@@ -1061,7 +1061,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   useEffect(() => {
     console.log("[r3-diag] autoSave useEffect run");
     if (cfg.apiMode === "mock" || !cfg.workerUrl) { console.log("[r3-diag] autoSave skipped: mock/no-workerUrl"); return; }
-    if (!blocks || blocks.length === 0) { console.log("[r3-diag] autoSave skipped: blocks empty"); return; }
+    // R3.d.2.c — tabDataState 단일 source 사용 (옛 blocks 영역 제거)
+    if (!tabDataState.correction?.blocks?.length) { console.log("[r3-diag] autoSave skipped: blocks empty"); return; }
     // R3.b/R3.d.2.b — 11 탭 모두 변경 감지. tabDataState 단일 source 사용 (R3.d.2.b).
     // fn 메타정보 영역 별도 보존 (schema 외).
     const currentSnapshot = JSON.stringify({ ...tabDataState, fn });
@@ -1101,8 +1102,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         clearTimeout(autoSaveTimer.current);
       }
     };
-    // R3.d.2.b — tabDataState 단일 source 추가. 옛 영역 deps 는 R3.d.2.d 에서 정리.
-  }, [tabDataState, blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache, lastSavedSnapshot, cfg]);
+    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source.
+  }, [tabDataState, fn, lastSavedSnapshot, cfg]);
 
   // CMS v2 — pagehide sendBeacon (묶음 ② A-2, TAB-MOD-01 모범 차용)
   useEffect(() => {
@@ -1110,20 +1111,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       const id = sessionIdRef.current;
       if (!id || dirtyTabs.current.size === 0 || cfg.apiMode === "mock" || !cfg.workerUrl) return;
       try {
-        // dirty 탭 모두 sendBeacon (비동기 / 보장 발사)
-        // R3.b — 11 탭 모두 dispatch (헌장 §5 11 탭 동등 / 가치 1 무손실 W4 보강).
-        // 본 단계 전까지 자식 탭 (setgen/visual/modify/metadata/manuscript/subtitle) 누락 → 페이지 닫기 시 직접 손실.
+        // R3.d.2.c — tabDataState 단일 source 11 탭 동등 dispatch (헌장 §5/§6 정식).
+        // 이전: 탭별 분기 (자식 탭 영역 코드 산재) → 단일 loop 정합.
         const payloads = {};
-        if (dirtyTabs.current.has("correction")) payloads.correction = { blocks, anal, diffs, scriptEdits, blockDeletions };
-        if (dirtyTabs.current.has("review")) payloads.review = reviewData || {};
-        if (dirtyTabs.current.has("guide")) payloads.guide = { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
-        if (dirtyTabs.current.has("highlight") && exportCache.highlight) payloads.highlight = exportCache.highlight;
-        if (dirtyTabs.current.has("setgen") && exportCache.setgen) payloads.setgen = exportCache.setgen;
-        if (dirtyTabs.current.has("visual") && exportCache.visual) payloads.visual = exportCache.visual;
-        if (dirtyTabs.current.has("modify") && exportCache.modify) payloads.modify = exportCache.modify;
-        if (dirtyTabs.current.has("metadata") && exportCache.metadata) payloads.metadata = exportCache.metadata;
-        if (dirtyTabs.current.has("manuscript") && exportCache.manuscript) payloads.manuscript = exportCache.manuscript;
-        if (dirtyTabs.current.has("subtitle") && exportCache.subtitle) payloads.subtitle = exportCache.subtitle;
+        for (const t of dirtyTabs.current) {
+          const data = tabDataState[t];
+          if (data && Object.keys(data).length > 0) payloads[t] = data;
+        }
         for (const [tab, data] of Object.entries(payloads)) {
           const body = JSON.stringify({ id, tab, data, fn });
           const blob = new Blob([body], { type: "application/json" });
@@ -1135,7 +1129,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     };
     window.addEventListener("pagehide", onPageHide);
     return () => window.removeEventListener("pagehide", onPageHide);
-  }, [blocks, anal, diffs, scriptEdits, blockDeletions, reviewData, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, exportCache, fn, cfg]);
+    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source.
+  }, [tabDataState, fn, cfg]);
 
   const handleShare = useCallback(async () => {
     // CMS v2 — A-1: 락(promise) — 자동저장 진행 중이면 skip 대신 대기 후 실행
@@ -1158,8 +1153,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       if (!e.failed && !e.conflicts) setErr(e.message);
     }
     finally { setSaving(false); }
-    // R3.d.2.b — tabDataState 단일 source 추가 (lastSavedSnapshot 형식 정합).
-  }, [tabDataState, blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache, cfg, saveDirtyTabsToKV, withSaveLock]);
+    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source.
+  }, [tabDataState, fn, cfg, saveDirtyTabsToKV, withSaveLock]);
 
   // ── 내보내기 ──
   const handleExport = useCallback(async () => {
