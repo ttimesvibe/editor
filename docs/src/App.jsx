@@ -14,7 +14,7 @@ import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlock
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
 import { _savedTheme, C, FN, applyTheme, MARKER_COLORS, MARKER_COLORS_LIGHT, MARKER_COLORS_DARK, setMarkerColors } from "./utils/styles.js";
 // R1 — 헌장 v1.1 §5/§6 정식 충족: 11 탭 데이터 schema 단일 진실.
-import { TAB_IDS, TAB_SCHEMAS, pickFields } from "./utils/tabSchemas.js";
+import { TAB_IDS, TAB_SCHEMAS, pickFields, isValidTab } from "./utils/tabSchemas.js";
 // R2.a/R2.b/R2.c — 부모 탭 컴포넌트 추출 (TabComponentInterface 따름).
 import ReviewTab from "./tabs/ReviewTab.jsx";
 import CorrectionTab from "./tabs/CorrectionTab.jsx";
@@ -335,6 +335,68 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     hl, hlStats, hlVerdicts, hlEdits, hlMarkers,
     exportCache,
   ]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // R3.a — patchTab 단일 setter API (헌장 §5/§6 정식 충족)
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // 책임: 11 탭 동등 단일 쓰기 진입점.
+  //   - 모든 탭 동일한 (tabId, partial, opts) 형식.
+  //   - 약속 Y 메커니즘: opts.markDirty=false 로 fetch / 초기 load 시 dirty 차단.
+  //   - 헌장 §3 금지 조항 강제: dirty 마킹은 본 함수에 단일화 → 진입 안 한 탭 dirty 누적 차단의 토대.
+  //
+  // 본 단계 (R3.a) 는 additive — 기존 setHl/setBlocks/setExportCache 호출은 그대로 유지.
+  // 새 코드는 patchTab 사용 권고. R3.b/c/d 단계에서 호출부 점진 이행 + useState 폐기.
+  //
+  // 호출 예:
+  //   patchTab("guide", { hl: newHl })
+  //   patchTab("highlight", { clips: ... })
+  //   patchTab("review", { reviewData: ... }, { markDirty: false })  // 약속 Y
+  //
+  // ───────────────────────────────────────────────────────────────────────────
+  const patchTab = useCallback((tabId, partial, opts = {}) => {
+    if (!isValidTab(tabId)) {
+      console.warn(`[patchTab] unknown tabId: ${tabId}`);
+      return;
+    }
+    if (!partial || typeof partial !== "object") return;
+
+    // 부모 4 탭 — 개별 useState setter 라우팅 (R3.d 시점에 단일 store 로 통합)
+    if (tabId === "review") {
+      if ("reviewData" in partial) setReviewData(partial.reviewData);
+    } else if (tabId === "correction") {
+      if ("blocks" in partial) setBlocks(partial.blocks);
+      if ("anal" in partial) setAnal(partial.anal);
+      if ("diffs" in partial) setDiffs(partial.diffs);
+      if ("scriptEdits" in partial) setScriptEdits(partial.scriptEdits);
+      if ("blockDeletions" in partial) setBlockDeletions(partial.blockDeletions);
+    } else if (tabId === "script") {
+      // script 와 correction 은 blocks/scriptEdits 공유 (헌장 정합 결정: 동일 참조)
+      if ("blocks" in partial) setBlocks(partial.blocks);
+      if ("scriptEdits" in partial) setScriptEdits(partial.scriptEdits);
+    } else if (tabId === "guide") {
+      // guide 와 highlight 는 hl/hlStats/hlVerdicts/hlEdits/hlMarkers 공유 (동일 참조)
+      if ("hl" in partial) setHl(partial.hl);
+      if ("hlStats" in partial) setHlStats(partial.hlStats);
+      if ("hlVerdicts" in partial) setHlVerdicts(partial.hlVerdicts);
+      if ("hlEdits" in partial) setHlEdits(partial.hlEdits);
+      if ("hlMarkers" in partial) setHlMarkers(partial.hlMarkers);
+    } else {
+      // 자식 7 탭 (highlight / setgen / visual / modify / metadata / manuscript / subtitle)
+      // — exportCache 통일 라우팅. R3.d 시점에 tabData 단일 store 로 통합.
+      setExportCache(prev => ({
+        ...prev,
+        [tabId]: { ...(prev[tabId] || {}), ...partial },
+      }));
+    }
+
+    // dirty 마킹 — 약속 Y 메커니즘. markDirty=false 시 차단 (fetch / 초기 load).
+    if (opts.markDirty !== false && !isInitialLoad.current) {
+      dirtyTabs.current.add(tabId);
+    }
+  }, []);
+  // eslint-disable-next-line no-unused-vars
+  const _patchTabRef = patchTab; // R3.b/c/d 시점 호출부 이행 — 현 단계에선 미사용 (lint 회피)
 
   // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
   const teSessionDebounce = useRef(null);
