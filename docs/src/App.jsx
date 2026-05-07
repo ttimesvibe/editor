@@ -13,6 +13,8 @@ import { parseDocxWithTrackChanges, computeBlockStrikes } from "./utils/docxPars
 import { calcRegression, tsToSeconds, secondsToDisplay, calcDuration, parseBlocks, splitChunks, chunkToText, chunkCtx } from "./utils/lengthModel.js";
 import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
 import { _savedTheme, C, FN, applyTheme, MARKER_COLORS, MARKER_COLORS_LIGHT, MARKER_COLORS_DARK, setMarkerColors } from "./utils/styles.js";
+// R1 — 헌장 v1.1 §5/§6 정식 충족: 11 탭 데이터 schema 단일 진실.
+import { TAB_IDS, TAB_SCHEMAS, pickFields } from "./utils/tabSchemas.js";
 import { generateExportHTML } from "./utils/exportHTML.js";
 
 // ── Components ──
@@ -300,6 +302,34 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const lRef = useRef(null), rRef = useRef(null), syncing = useRef(false), bEls = useRef({});
   const dirtyTabs = useRef(new Set()); // 마지막 저장 이후 변경된 탭 추적
   const isInitialLoad = useRef(true); // 초기 로드 중에는 dirty 마킹 안 함
+
+  // ── R1 — 11 탭 단일 store (derived state) — 헌장 §5/§6 정식 충족 prep ──
+  // 본 store 는 R1 시점에 derived (부모 탭의 useState 들 + 자식 탭의 exportCache 의 결합).
+  // R3 시점에 부모 state 폐기 + tabData 가 진짜 source of truth 로 변환됨.
+  // 본 단계 (R1) 에선 사용 X (라이브 영향 0). R2.a~d 의 컴포넌트 추출 + R3 폐기 시점에 사용 시작.
+  //
+  // 헌장 §5 (11 탭 동등): tabData[tabId] 가 단일 형식 → 모든 탭 동등 read/write.
+  // 헌장 §6 (부모/자식 카테고리 거부): 외부에서 부모/자식 구분 불가능 — 모두 tabData[tabId] 키.
+  // 미래 변경 시 utils/tabSchemas.js 의 TAB_SCHEMAS 가 단일 진실.
+  // eslint-disable-next-line no-unused-vars
+  const tabData = useMemo(() => ({
+    review:     pickFields("review",     { reviewData }),
+    correction: pickFields("correction", { blocks, anal, diffs, scriptEdits, blockDeletions }),
+    script:     pickFields("script",     { blocks, scriptEdits }),
+    guide:      pickFields("guide",      { hl, hlStats, hlVerdicts, hlEdits, hlMarkers }),
+    highlight:  exportCache.highlight  || {},
+    setgen:     exportCache.setgen     || {},
+    visual:     exportCache.visual     || {},
+    modify:     exportCache.modify     || {},
+    metadata:   exportCache.metadata   || {},
+    manuscript: exportCache.manuscript || {},
+    subtitle:   exportCache.subtitle   || {},
+  }), [
+    reviewData,
+    blocks, anal, diffs, scriptEdits, blockDeletions,
+    hl, hlStats, hlVerdicts, hlEdits, hlMarkers,
+    exportCache,
+  ]);
 
   // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
   const teSessionDebounce = useRef(null);
