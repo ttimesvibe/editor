@@ -491,17 +491,23 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, [patchTab]);
 
   // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
+  // R3.d.2.f — schemaVersion 3.0 (tabDataState 단일 source). 옛 형식은 load 시 fallback 영역.
+  // 이전 deps 의 exportCache 누락 결함 (R3.b 시점) 동시 해소.
   const teSessionDebounce = useRef(null);
   useEffect(() => {
-    if (blocks.length === 0) return;
+    if (!tabDataState.correction.blocks?.length) return;
     if (teSessionDebounce.current) clearTimeout(teSessionDebounce.current);
     teSessionDebounce.current = setTimeout(() => {
       try {
-        localStorage.setItem("te_session", JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark, exportCache }));
+        localStorage.setItem("te_session", JSON.stringify({
+          schemaVersion: "3.0",
+          tabDataState,
+          fn, tab, gReady, bookmark,
+        }));
       } catch {}
     }, 500);
     return () => { if (teSessionDebounce.current) clearTimeout(teSessionDebounce.current); };
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, tab, gReady, bookmark]);
+  }, [tabDataState, fn, tab, gReady, bookmark]);
 
   // CMS v2 — 묶음 ⑫ Phase 2+3 (30초 폴링 + heartbeat + active-users + leave)
   useEffect(() => {
@@ -743,7 +749,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         const saved = localStorage.getItem("te_session");
         if (saved) {
           const s = JSON.parse(saved);
-          if (s.blocks?.length > 0) {
+          if (s.schemaVersion === "3.0" && s.tabDataState) {
+            // R3.d.2.f — 새 형식 (tabDataState 단일 source)
+            setTabDataState(s.tabDataState);
+            setFn(s.fn || ""); setTab(s.tab || "correction"); setGReady(s.gReady || false);
+            if (s.bookmark != null) setBookmark(s.bookmark);
+          } else if (s.blocks?.length > 0) {
+            // R3.d.2.f — 옛 형식 fallback (호환 보존, W2 영역 정합).
+            // setter wrapper 가 tabDataState 영역으로 자동 라우팅.
             setBlocks(s.blocks); setAnal(s.anal || null);
             setDiffs(s.diffs || []); setHl(s.hl || []);
             setHlStats(s.hlStats || null); setHlVerdicts(s.hlVerdicts || {}); setHlEdits(s.hlEdits || {}); setHlMarkers(s.hlMarkers || {}); setScriptEdits(s.scriptEdits || {}); setBlockDeletions(s.blockDeletions || {}); setReviewData(s.reviewData || null);
