@@ -337,6 +337,16 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // R3.d.1 — tabDataRef (단일 ref source for SAVE_DISPATCH)
+  // ─────────────────────────────────────────────────────────────────────────
+  // 결함 A 해소: SAVE_DISPATCH 의 closure capture stale 영역 차단.
+  // saveDirtyTabsToKV 가 tabDataRef.current 직접 read → 항상 최신.
+  // useEffect 로 동기 (1 frame 지연이지만 30s timer 영역에서 무관).
+  // ───────────────────────────────────────────────────────────────────────────
+  const tabDataRef = useRef({});
+  useEffect(() => { tabDataRef.current = tabData; }, [tabData]);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // R3.a — patchTab 단일 setter API (헌장 §5/§6 정식 충족)
   // ─────────────────────────────────────────────────────────────────────────
   //
@@ -804,9 +814,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // opts.manual : 수동 저장 (실패 시 모달 노출)
   // opts.silent : 자동 저장 (silent fail, 3회 누적 시 토스트만)
   const saveDirtyTabsToKV = useCallback(async (id, overrides = {}, opts = {}) => {
-    if (!id || cfg.apiMode === "mock") return;
+    console.log(`[r3-diag] save ENTER, id=${id}, mock=${cfg.apiMode}, workerUrl=${!!cfg.workerUrl}, dirty=[${[...dirtyTabs.current].join(",")}]`);
+    if (!id || cfg.apiMode === "mock") { console.log("[r3-diag] save SKIP: no-id-or-mock"); return; }
     const dirty = dirtyTabs.current;
-    if (dirty.size === 0) return;
+    if (dirty.size === 0) { console.log("[r3-diag] save SKIP: dirty-empty"); return; }
     const tabsToSave = [];
     const payloads = {};
     const saves = [];
@@ -816,29 +827,32 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       force: !!opts.force,
     });
 
-    // CMS v2 — 묶음 ⑤ G2 + G7: 11 탭 dispatch table
-    // 모든 탭이 동일한 v2 가드 (충돌 감지 / 모달 / 4중 백업 / 토스트) 통과
+    // R3.d.1 — tabDataRef.current 단일 source 직접 read (closure capture 영역 X).
+    // 결함 A 해소: stale closure 차단. tabData 가 단일 source of truth.
+    // 헌장 §5 (11 탭 동등) — 모든 탭 동일 형식 dispatch.
+    const tdr = tabDataRef.current || {};
     const SAVE_DISPATCH = {
-      correction: () => ({ blocks, anal, diffs, scriptEdits, blockDeletions }),
-      review:     () => reviewData || {},
-      guide:      () => ({ hl, hlStats, hlVerdicts, hlEdits, hlMarkers }),
-      highlight:  () => exportCache.highlight,
-      visual:     () => exportCache.visual,
-      setgen:     () => exportCache.setgen,
-      modify:     () => exportCache.modify,
-      metadata:   () => exportCache.metadata,
-      manuscript: () => exportCache.manuscript,
-      subtitle:   () => exportCache.subtitle,
+      correction: () => tdr.correction,
+      review:     () => tdr.review,
+      guide:      () => tdr.guide,
+      highlight:  () => tdr.highlight,
+      visual:     () => tdr.visual,
+      setgen:     () => tdr.setgen,
+      modify:     () => tdr.modify,
+      metadata:   () => tdr.metadata,
+      manuscript: () => tdr.manuscript,
+      subtitle:   () => tdr.subtitle,
     };
 
     for (const t of dirty) {
       const data = overrides[t] !== undefined ? overrides[t] : SAVE_DISPATCH[t]?.();
-      if (!data) continue; // 데이터 없으면 skip (예: highlight 의 exportCache 미설정)
+      if (!data) { console.log(`[r3-diag] save SKIP TAB: ${t} — data falsy (typeof=${typeof data})`); continue; }
       payloads[t] = data;
       tabsToSave.push(t);
       saves.push(apiSaveTab(id, t, data, cfg, fn, optsFor(t)));
     }
-    if (saves.length === 0) return;
+    console.log(`[r3-diag] save BUILD: ${saves.length} tabs to PUT: [${tabsToSave.join(",")}]`);
+    if (saves.length === 0) { console.log("[r3-diag] save EARLY: saves empty (all tabs had falsy data)"); return; }
 
     // Promise.allSettled — 결과 분류
     const results = await Promise.allSettled(saves);
@@ -866,6 +880,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     const remaining = new Set([...dirty].filter((t) => !successSet.has(t)));
     dirtyTabs.current = remaining;
 
+    console.log(`[r3-diag] save RESULT: success=${success.length}, failed=${failed.length}, conflicts=${conflicts.length}`);
     if (success.length > 0) console.log(`[save-flow] saved: [${success.join(", ")}]`);
 
     // 실패 처리
