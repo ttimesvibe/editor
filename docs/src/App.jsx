@@ -398,6 +398,42 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // eslint-disable-next-line no-unused-vars
   const _patchTabRef = patchTab; // R3.b/c/d 시점 호출부 이행 — 현 단계에선 미사용 (lint 회피)
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // R3.c-prep — 자식 탭 onSave 안정화 (useCallback 으로 감싸 무한 루프 차단)
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // 사고 박제 (R3.b-diag 진단 결과):
+  //   VisualTab L531 / ModifyTab L435 의 useEffect deps 영역에 onSave 가 포함됨.
+  //   기존 인라인 onSave = 부모 re-render 마다 새 함수 참조 → 자식 useEffect 영원한 fire
+  //   → setExportCache → 부모 re-render → ... 무한 루프.
+  //   → autoSave 30s timer 가 fire 전에 매번 cleanup → 자동저장 영원히 미작동 + 데이터 손실.
+  //
+  // useCallback(... , [])  로 감싸면 ref 고정 → 자식 useEffect deps 변경 X → 루프 차단.
+  // setExportCache / dirtyTabs.current.add 는 React 가 보장한 stable 참조 (deps 영역 X).
+  //
+  // R3.c (정식 patchTab 이행) 의 부분 영역. patchTab 으로 갈음 시 자동 충족.
+  //
+  // ───────────────────────────────────────────────────────────────────────────
+  const handleHighlightSave = useCallback((data) => {
+    console.log("[r3-diag] highlight onSave called, keys=", data ? Object.keys(data) : "null");
+    setExportCache(prev => ({ ...prev, highlight: data }));
+  }, []);
+  const handleSetgenSave = useCallback((data) => {
+    console.log("[r3-diag] setgen onSave called, keys=", data ? Object.keys(data) : "null");
+    setExportCache(prev => ({ ...prev, setgen: data }));
+    dirtyTabs.current.add("setgen");
+  }, []);
+  const handleVisualSave = useCallback((data) => {
+    console.log("[r3-diag] visual onSave called, keys=", data ? Object.keys(data) : "null");
+    setExportCache(prev => ({ ...prev, visual: data }));
+    dirtyTabs.current.add("visual");
+  }, []);
+  const handleModifySave = useCallback((data) => {
+    console.log("[r3-diag] modify onSave called, keys=", data ? Object.keys(data) : "null", "items=", data?.modifications?.length);
+    setExportCache(prev => ({ ...prev, modify: data }));
+    dirtyTabs.current.add("modify");
+  }, []);
+
   // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
   const teSessionDebounce = useRef(null);
   useEffect(() => {
@@ -1839,10 +1875,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           config={cfg}
           currentTab={tab}
           initialData={exportCache.highlight}
-          onSave={(data) => {
-            console.log("[r3-diag] highlight onSave called, keys=", data ? Object.keys(data) : "null");
-            setExportCache(prev => ({ ...prev, highlight: data }));
-          }}
+          onSave={handleHighlightSave}
         />
       </div>}
 
@@ -1858,12 +1891,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           keywords={anal?.overview?.keywords || []}
           currentTab={tab}
           initialData={exportCache.setgen}
-          onSave={(data) => {
-            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
-            console.log("[r3-diag] setgen onSave called, keys=", data ? Object.keys(data) : "null");
-            setExportCache(prev => ({ ...prev, setgen: data }));
-            dirtyTabs.current.add("setgen");
-          }}
+          onSave={handleSetgenSave}
         />
       </div>}
 
@@ -1876,12 +1904,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           config={cfg}
           currentTab={tab}
           initialData={exportCache.visual}
-          onSave={(data) => {
-            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
-            console.log("[r3-diag] visual onSave called, keys=", data ? Object.keys(data) : "null");
-            setExportCache(prev => ({ ...prev, visual: data }));
-            dirtyTabs.current.add("visual");
-          }}
+          onSave={handleVisualSave}
         />
       </div>}
 
@@ -1893,12 +1916,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           currentTab={tab}
           initialData={exportCache.modify}
           authUser={authUser}
-          onSave={(data) => {
-            // CMS v2 — 자식 → 부모 즉시 박제 (KV PUT 은 부모 자동저장 30초 디바운스가 처리).
-            console.log("[r3-diag] modify onSave called, keys=", data ? Object.keys(data) : "null", "items=", data?.modifications?.length);
-            setExportCache(prev => ({ ...prev, modify: data }));
-            dirtyTabs.current.add("modify");
-          }}
+          onSave={handleModifySave}
         />
       </div>}
     </main>
