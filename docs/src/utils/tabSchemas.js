@@ -84,20 +84,24 @@ export const TAB_SCHEMAS = Object.freeze({
     description: "편집 가이드 — 하이라이트 / 통계 / 평가 / 편집 / 마커",
   },
   highlight: {
-    fields: ["hl", "hlStats", "hlVerdicts", "hlEdits", "hlMarkers", "clips"],
-    description: "하이라이트 — 가이드 + 클립 데이터",
+    // R3.c — 실제 HighlightTab onSave data 와 일치 (이전: ["hl",...,"clips"] = 추측 / 미사용 영역)
+    fields: ["clips", "recs"],
+    description: "하이라이트 — 클립 / 추천",
   },
   setgen: {
-    fields: ["sets"],
-    description: "세트 생성",
+    // R3.c — 실제 SetgenTab onSave data 와 일치 (이전: ["sets"] = 추측)
+    fields: ["result", "trendData", "trendingNow", "keywords", "selections", "edits", "focusKeyword", "timestamps"],
+    description: "세트 생성 — 결과 / 트렌드 / 키워드 / 선택 / 편집",
   },
   visual: {
-    fields: ["guides", "items"],
-    description: "자료-그래픽 — 시각화 / 인서트 컷 / 자료",
+    // R3.c — 실제 VisualTab onSave data 와 일치 (이전: ["guides","items"] = 추측)
+    fields: ["visualGuides", "insertCuts", "verdicts", "manualResources", "visualMarkers"],
+    description: "자료-그래픽 — 시각화 가이드 / 인서트 컷 / 평가 / 자료 / 마커",
   },
   modify: {
-    fields: ["modifications"],
-    description: "영상 수정 — 수정 사항 모음",
+    // R3.c — 실제 ModifyTab onSave data 와 일치 (이전: ["modifications"] = 추측)
+    fields: ["videoUrl", "videoId", "title", "cards"],
+    description: "영상 수정 — 영상 URL / 제목 / 수정 카드",
   },
   metadata: {
     fields: ["meta"],

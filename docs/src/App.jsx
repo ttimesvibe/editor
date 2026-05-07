@@ -414,25 +414,25 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // R3.c (정식 patchTab 이행) 의 부분 영역. patchTab 으로 갈음 시 자동 충족.
   //
   // ───────────────────────────────────────────────────────────────────────────
+  // R3.c — patchTab 정식 이행. setExportCache + dirtyTabs.add 통합.
+  // pickFields 가 schema fields 외 키 (savedAt 등 메타) 자동 필터링.
+  // patchTab 안의 isInitialLoad 가드가 약속 Y 의 토대 — 초기 load 시 dirty 차단.
   const handleHighlightSave = useCallback((data) => {
     console.log("[r3-diag] highlight onSave called, keys=", data ? Object.keys(data) : "null");
-    setExportCache(prev => ({ ...prev, highlight: data }));
-  }, []);
+    patchTab("highlight", pickFields("highlight", data || {}));
+  }, [patchTab]);
   const handleSetgenSave = useCallback((data) => {
     console.log("[r3-diag] setgen onSave called, keys=", data ? Object.keys(data) : "null");
-    setExportCache(prev => ({ ...prev, setgen: data }));
-    dirtyTabs.current.add("setgen");
-  }, []);
+    patchTab("setgen", pickFields("setgen", data || {}));
+  }, [patchTab]);
   const handleVisualSave = useCallback((data) => {
     console.log("[r3-diag] visual onSave called, keys=", data ? Object.keys(data) : "null");
-    setExportCache(prev => ({ ...prev, visual: data }));
-    dirtyTabs.current.add("visual");
-  }, []);
+    patchTab("visual", pickFields("visual", data || {}));
+  }, [patchTab]);
   const handleModifySave = useCallback((data) => {
-    console.log("[r3-diag] modify onSave called, keys=", data ? Object.keys(data) : "null", "items=", data?.modifications?.length);
-    setExportCache(prev => ({ ...prev, modify: data }));
-    dirtyTabs.current.add("modify");
-  }, []);
+    console.log("[r3-diag] modify onSave called, keys=", data ? Object.keys(data) : "null", "cards=", data?.cards?.length);
+    patchTab("modify", pickFields("modify", data || {}));
+  }, [patchTab]);
 
   // ── localStorage 자동저장 (CMS v2 G5/PS2: 500ms debounce, main thread 차단 완화) ──
   const teSessionDebounce = useRef(null);
