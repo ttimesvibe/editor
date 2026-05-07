@@ -979,7 +979,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   useEffect(() => {
     if (cfg.apiMode === "mock" || !cfg.workerUrl) return;
     if (!blocks || blocks.length === 0) return;
-    const currentSnapshot = JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn });
+    // R3.b — 자식 탭 (exportCache) 도 변경 감지 영역 포함. 헌장 §5 (11 탭 동등 dirty 감지).
+    const currentSnapshot = JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache });
     if (currentSnapshot === lastSavedSnapshot) return;
 
     setAutoSaveStatus("pending");
@@ -1009,7 +1010,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     }, 30 * 1000); // CMS v2: 30초 (묶음 ② A-1, 3분 → 30초)
 
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, lastSavedSnapshot, cfg]);
+    // R3.b — exportCache 추가 (자식 탭 변경 시 useEffect 재실행 → 30s timer fire). 헌장 §5/§3 정합.
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache, lastSavedSnapshot, cfg]);
 
   // CMS v2 — pagehide sendBeacon (묶음 ② A-2, TAB-MOD-01 모범 차용)
   useEffect(() => {
@@ -1018,11 +1020,19 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       if (!id || dirtyTabs.current.size === 0 || cfg.apiMode === "mock" || !cfg.workerUrl) return;
       try {
         // dirty 탭 모두 sendBeacon (비동기 / 보장 발사)
+        // R3.b — 11 탭 모두 dispatch (헌장 §5 11 탭 동등 / 가치 1 무손실 W4 보강).
+        // 본 단계 전까지 자식 탭 (setgen/visual/modify/metadata/manuscript/subtitle) 누락 → 페이지 닫기 시 직접 손실.
         const payloads = {};
         if (dirtyTabs.current.has("correction")) payloads.correction = { blocks, anal, diffs, scriptEdits, blockDeletions };
         if (dirtyTabs.current.has("review")) payloads.review = reviewData || {};
         if (dirtyTabs.current.has("guide")) payloads.guide = { hl, hlStats, hlVerdicts, hlEdits, hlMarkers };
         if (dirtyTabs.current.has("highlight") && exportCache.highlight) payloads.highlight = exportCache.highlight;
+        if (dirtyTabs.current.has("setgen") && exportCache.setgen) payloads.setgen = exportCache.setgen;
+        if (dirtyTabs.current.has("visual") && exportCache.visual) payloads.visual = exportCache.visual;
+        if (dirtyTabs.current.has("modify") && exportCache.modify) payloads.modify = exportCache.modify;
+        if (dirtyTabs.current.has("metadata") && exportCache.metadata) payloads.metadata = exportCache.metadata;
+        if (dirtyTabs.current.has("manuscript") && exportCache.manuscript) payloads.manuscript = exportCache.manuscript;
+        if (dirtyTabs.current.has("subtitle") && exportCache.subtitle) payloads.subtitle = exportCache.subtitle;
         for (const [tab, data] of Object.entries(payloads)) {
           const body = JSON.stringify({ id, tab, data, fn });
           const blob = new Blob([body], { type: "application/json" });
@@ -1048,7 +1058,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           await saveDirtyTabsToKV(id, {}, { manual: true });
           const url = `${window.location.origin}${window.location.pathname}?s=${id}`;
           setShareUrl(url);
-          setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn }));
+          // R3.b — autoSave 의 currentSnapshot 형식과 일치 (exportCache 포함). 헌장 §5 (11 탭 동등).
+          setLastSavedSnapshot(JSON.stringify({ blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache }));
           if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); setAutoSaveStatus(""); }
         } finally { savingInProgress.current = false; }
       });
@@ -1056,7 +1067,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       if (!e.failed && !e.conflicts) setErr(e.message);
     }
     finally { setSaving(false); }
-  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, cfg, saveDirtyTabsToKV, withSaveLock]);
+    // R3.b — handleShare deps 에 exportCache 추가 (lastSavedSnapshot 형식 일관성 + 최신 capture).
+  }, [blocks, anal, diffs, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, scriptEdits, blockDeletions, reviewData, fn, exportCache, cfg, saveDirtyTabsToKV, withSaveLock]);
 
   // ── 내보내기 ──
   const handleExport = useCallback(async () => {
