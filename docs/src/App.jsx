@@ -347,6 +347,21 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   useEffect(() => { tabDataRef.current = tabData; }, [tabData]);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // R3.d.2.a — tabDataState 단일 store (additive, dual-write 토대)
+  // ─────────────────────────────────────────────────────────────────────────
+  // 단계별 plan: .a 단계는 신설만 (사용 X) + patchTab dual-write 토대.
+  // 후속 단계 (.b ~ .f) 에서 saveDirtyTabsToKV / useEffect deps / useState 폐기 점진 이행.
+  // 헌장 §5/§6 정식 충족 토대 — 11 탭 동등 단일 store.
+  // ───────────────────────────────────────────────────────────────────────────
+  const [tabDataState, setTabDataState] = useState(() => ({
+    review: {}, correction: {}, script: {}, guide: {},
+    highlight: {}, setgen: {}, visual: {}, modify: {},
+    metadata: {}, manuscript: {}, subtitle: {},
+  }));
+  // eslint-disable-next-line no-unused-vars
+  const _tabDataStateRef = tabDataState; // R3.d.2.b 시점 활용 — 현 단계 미사용 (lint 회피)
+
+  // ─────────────────────────────────────────────────────────────────────────
   // R3.a — patchTab 단일 setter API (헌장 §5/§6 정식 충족)
   // ─────────────────────────────────────────────────────────────────────────
   //
@@ -399,6 +414,12 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         [tabId]: { ...(prev[tabId] || {}), ...partial },
       }));
     }
+
+    // R3.d.2.a — 단일 store dual-write (additive). 후속 단계에서 단일 source 로 이행.
+    setTabDataState(prev => ({
+      ...prev,
+      [tabId]: { ...(prev[tabId] || {}), ...partial },
+    }));
 
     // dirty 마킹 — 약속 Y 메커니즘. markDirty=false 시 차단 (fetch / 초기 load).
     if (opts.markDirty !== false && !isInitialLoad.current) {
