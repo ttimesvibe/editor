@@ -234,20 +234,12 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       return next;
     });
   }, []);
-  const [blocks, setBlocks] = useState([]);
-  const [diffs, setDiffs] = useState([]);
-  const [hl, setHl] = useState([]);
-  const [hlStats, setHlStats] = useState(null);
-  const [hlVerdicts, setHlVerdicts] = useState({}); // { "blockIndex-subtitle": "use"|"recommend"|"discard"|null }
-  const [hlEdits, setHlEdits] = useState({}); // { "blockIndex-subtitle": "수정된 텍스트" }
-  const [scriptEdits, setScriptEdits] = useState({}); // { blockIndex: "수동 편집된 텍스트" } — 1.5단계
-  const [blockDeletions, setBlockDeletions] = useState({}); // { blockIndex: [{s, e}, ...] } — 수정본 삭제선
+  // R3.d.2.d — 12 useState 폐기. tabDataState 단일 source 에서 derived const + setter wrapper.
+  // (선언부는 L320 영역 tabDataState 정의 후 — 본 영역은 useState 영역 외 보존만)
   const [subtitleCache, setSubtitleCache] = useState(null); // AI 자막 포맷팅 결과 캐시
   const [subtitleResult, setSubtitleResult] = useState(null); // 2패널 표시용 자막 결과
-  const [reviewData, setReviewData] = useState(null); // 0차: { paragraphs, hasTrackChanges, deletedBlockIndices, duration }
   const [addingAt, setAddingAt] = useState(null); // 자막 추가 중인 block_index
   const [addForm, setAddForm] = useState({ subtitle: "", type: "A1" }); // 추가 폼 상태
-  const [anal, setAnal] = useState(null);
   const [fn, setFn] = useState("");
   const [tab, setTab] = useState("correction");
   const [busy, setBusy] = useState(false);
@@ -284,11 +276,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, []);
   const [saving, setSaving] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
-  const [hlMarkers, setHlMarkers] = useState({}); // { "blockIdx-subtitle": { color: "yellow", ranges: [{s,e}] } }
+  // R3.d.2.d — hlMarkers / exportCache 폐기 (derived 영역으로 이전, L320 이후 영역에서)
   const [matchingMode, setMatchingMode] = useState(null); // { key: "blockIdx-subtitle", color: "yellow" } or null
   const [showSessions, setShowSessions] = useState(false); // 세션 목록 모달
   const [bookmark, setBookmark] = useState(null); // 책갈피 블록 인덱스
-  const [exportCache, setExportCache] = useState({}); // { highlight, setgen, visual, modify }
 
   // CMS v2 — D2 모달 + 4중 백업 (묶음 ① ½)
   const [saveFailModal, setSaveFailModal] = useState(null);
@@ -354,14 +345,94 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   // 헌장 §5/§6 정식 충족 토대 — 11 탭 동등 단일 store.
   // ───────────────────────────────────────────────────────────────────────────
   const [tabDataState, setTabDataState] = useState(() => ({
-    review: {}, correction: {}, script: {}, guide: {},
-    highlight: {}, setgen: {}, visual: {}, modify: {},
-    metadata: {}, manuscript: {}, subtitle: {},
+    // R3.d.2.d — 모든 영역 fully-initialized (derived const 영역의 새 reference 회피 — 안정 영역)
+    review:     { reviewData: null },
+    correction: { blocks: [], anal: null, diffs: [], scriptEdits: {}, blockDeletions: {} },
+    script:     { blocks: [], scriptEdits: {} },
+    guide:      { hl: [], hlStats: null, hlVerdicts: {}, hlEdits: {}, hlMarkers: {} },
+    highlight:  {},
+    setgen:     {},
+    visual:     {},
+    modify:     {},
+    metadata:   {},
+    manuscript: {},
+    subtitle:   {},
   }));
-  // R3.d.2.b — tabDataState ← tabData useMemo sync.
-  // patchTab 외 write 영역 (초기 load / applyServerToState / 옛 RestoreModal 등) 도 cover.
-  // 1 frame 영역 지연 — 30s timer 영역에서 무관.
-  useEffect(() => { setTabDataState(tabData); }, [tabData]);
+  // R3.d.2.d — R3.d.2.b 의 sync useEffect 영역 제거.
+  // 이전: useEffect(() => { setTabDataState(tabData); }, [tabData]);
+  // useState 폐기 후 tabDataState 가 primary → 옛 sync 영역 무한 루프 위험.
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // R3.d.2.d — 12 useState 폐기 후 derived const + setter wrapper.
+  // 헌장 §5/§6 정식 충족 — tabDataState 단일 source.
+  // ─────────────────────────────────────────────────────────────────────────
+  // derived const (read 영역) — tabDataState 영역에서 직접 read.
+  // 옛 useState 영역과 동일한 형식 보장 (호환).
+  // ───────────────────────────────────────────────────────────────────────────
+  // R3.d.2.d — 초기 tabDataState 가 fully-initialized 라 fallback (|| []) 영역 안 탐 →
+  //            매 렌더 동일 reference 유지. useEffect deps 영역 안정.
+  // review 탭
+  const reviewData = tabDataState.review.reviewData;
+  // correction 탭 (script 와 blocks/scriptEdits 공유)
+  const blocks = tabDataState.correction.blocks;
+  const anal = tabDataState.correction.anal;
+  const diffs = tabDataState.correction.diffs;
+  const scriptEdits = tabDataState.correction.scriptEdits;
+  const blockDeletions = tabDataState.correction.blockDeletions;
+  // guide 탭
+  const hl = tabDataState.guide.hl;
+  const hlStats = tabDataState.guide.hlStats;
+  const hlVerdicts = tabDataState.guide.hlVerdicts;
+  const hlEdits = tabDataState.guide.hlEdits;
+  const hlMarkers = tabDataState.guide.hlMarkers;
+  // 자식 7 탭 (호환 영역 — 옛 exportCache 형식 그대로)
+  const exportCache = useMemo(() => ({
+    highlight:  tabDataState.highlight  || {},
+    setgen:     tabDataState.setgen     || {},
+    visual:     tabDataState.visual     || {},
+    modify:     tabDataState.modify     || {},
+    metadata:   tabDataState.metadata   || {},
+    manuscript: tabDataState.manuscript || {},
+    subtitle:   tabDataState.subtitle   || {},
+  }), [tabDataState]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // setter wrapper 12 개 — setTabDataState 라우팅 + dirty 마킹 (옛 useEffect 영역 대체)
+  // 함수형 setter (setX(prev => fn(prev))) 호환 보장.
+  // ───────────────────────────────────────────────────────────────────────────
+  const _makeFieldSetter = (tabId, fieldName, defaultVal) => (val) => {
+    setTabDataState(prev => {
+      const cur = prev[tabId]?.[fieldName] ?? defaultVal;
+      const next = typeof val === "function" ? val(cur) : val;
+      return { ...prev, [tabId]: { ...(prev[tabId] || {}), [fieldName]: next } };
+    });
+    if (!isInitialLoad.current) dirtyTabs.current.add(tabId);
+  };
+  const setReviewData    = useCallback(_makeFieldSetter("review",     "reviewData",     null), []);
+  const setBlocks        = useCallback(_makeFieldSetter("correction", "blocks",         []), []);
+  const setAnal          = useCallback(_makeFieldSetter("correction", "anal",           null), []);
+  const setDiffs         = useCallback(_makeFieldSetter("correction", "diffs",          []), []);
+  const setScriptEdits   = useCallback(_makeFieldSetter("correction", "scriptEdits",    {}), []);
+  const setBlockDeletions= useCallback(_makeFieldSetter("correction", "blockDeletions", {}), []);
+  const setHl            = useCallback(_makeFieldSetter("guide",      "hl",             []), []);
+  const setHlStats       = useCallback(_makeFieldSetter("guide",      "hlStats",        null), []);
+  const setHlVerdicts    = useCallback(_makeFieldSetter("guide",      "hlVerdicts",     {}), []);
+  const setHlEdits       = useCallback(_makeFieldSetter("guide",      "hlEdits",        {}), []);
+  const setHlMarkers     = useCallback(_makeFieldSetter("guide",      "hlMarkers",      {}), []);
+
+  // setExportCache wrapper — 자식 7 탭 영역 일괄 처리 (옛 형식 호환)
+  const setExportCache = useCallback((val) => {
+    const childTabs = ["highlight", "setgen", "visual", "modify", "metadata", "manuscript", "subtitle"];
+    setTabDataState(prev => {
+      const oldCache = {};
+      for (const t of childTabs) oldCache[t] = prev[t] || {};
+      const newCache = typeof val === "function" ? val(oldCache) : val;
+      const next = { ...prev };
+      for (const t of childTabs) next[t] = (newCache && newCache[t]) || {};
+      return next;
+    });
+    // dirty 마킹은 L668-694 useEffect 영역에서 변경 감지 (호환 보존)
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
   // R3.a — patchTab 단일 setter API (헌장 §5/§6 정식 충족)
@@ -388,36 +459,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     }
     if (!partial || typeof partial !== "object") return;
 
-    // 부모 4 탭 — 개별 useState setter 라우팅 (R3.d 시점에 단일 store 로 통합)
-    if (tabId === "review") {
-      if ("reviewData" in partial) setReviewData(partial.reviewData);
-    } else if (tabId === "correction") {
-      if ("blocks" in partial) setBlocks(partial.blocks);
-      if ("anal" in partial) setAnal(partial.anal);
-      if ("diffs" in partial) setDiffs(partial.diffs);
-      if ("scriptEdits" in partial) setScriptEdits(partial.scriptEdits);
-      if ("blockDeletions" in partial) setBlockDeletions(partial.blockDeletions);
-    } else if (tabId === "script") {
-      // script 와 correction 은 blocks/scriptEdits 공유 (헌장 정합 결정: 동일 참조)
-      if ("blocks" in partial) setBlocks(partial.blocks);
-      if ("scriptEdits" in partial) setScriptEdits(partial.scriptEdits);
-    } else if (tabId === "guide") {
-      // guide 와 highlight 는 hl/hlStats/hlVerdicts/hlEdits/hlMarkers 공유 (동일 참조)
-      if ("hl" in partial) setHl(partial.hl);
-      if ("hlStats" in partial) setHlStats(partial.hlStats);
-      if ("hlVerdicts" in partial) setHlVerdicts(partial.hlVerdicts);
-      if ("hlEdits" in partial) setHlEdits(partial.hlEdits);
-      if ("hlMarkers" in partial) setHlMarkers(partial.hlMarkers);
-    } else {
-      // 자식 7 탭 (highlight / setgen / visual / modify / metadata / manuscript / subtitle)
-      // — exportCache 통일 라우팅. R3.d 시점에 tabData 단일 store 로 통합.
-      setExportCache(prev => ({
-        ...prev,
-        [tabId]: { ...(prev[tabId] || {}), ...partial },
-      }));
-    }
-
-    // R3.d.2.a — 단일 store dual-write (additive). 후속 단계에서 단일 source 로 이행.
+    // R3.d.2.d — 단일 source setTabDataState 직접 호출. 12 setter wrapper 영역 통과 X.
+    // (옛 routing 영역 제거 — wrapper 가 단일 source 라 중복 영역 방지)
     setTabDataState(prev => ({
       ...prev,
       [tabId]: { ...(prev[tabId] || {}), ...partial },
