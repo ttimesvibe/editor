@@ -600,13 +600,18 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   }, []);
 
   // CMS v2 — 진입 시 복원 모달 (D2 — 다음 로그인 즉시)
+  // R3.e-2 — 현재 프로젝트 (URL ?s=) sessionId 와 일치하는 backup 만 popup.
+  // 이전 결함: getLatestBackup() 이 sessionId 무관하게 최신 backup 반환 → 다른 프로젝트 backup 도 popup
+  // → 사용자 "무시" 클릭해도 매 진입마다 재출현 (무한 영역).
   useEffect(() => {
     try {
-      const latest = getLatestBackup();
-      if (latest && latest.sessionId) {
-        const all = listBackups();
-        setRestoreModal({ backup: latest, totalCount: all.length });
-      }
+      const params = new URLSearchParams(window.location.search);
+      const currentSid = params.get("s");
+      if (!currentSid) return;  // sessionId 없으면 (대시보드 영역) popup X
+      const all = listBackups().filter(b => b.sessionId === currentSid);
+      if (all.length === 0) return;
+      // 현재 sessionId 의 최신 backup
+      setRestoreModal({ backup: all[0], totalCount: all.length });
     } catch (e) {
       console.warn("[backup] restore check failed:", e?.message || e);
     }
@@ -2128,7 +2133,15 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           setErr("복원에 실패했습니다. 백업 목록에서 다운로드하여 수동 복원해주세요.");
         }
       }}
-      onSkip={() => setRestoreModal(null)}
+      onSkip={() => {
+        // R3.e-2 — 사용자 명시 "무시" → 해당 backup 삭제 (재출현 차단).
+        // 같은 sessionId 의 다른 backup 잔존 시 다음 진입에 또 popup (잔존 backup 영역).
+        if (restoreModal?.backup?.key) {
+          deleteBackup(restoreModal.backup.key);
+          console.log(`[backup] skip+delete: ${restoreModal.backup.key}`);
+        }
+        setRestoreModal(null);
+      }}
       onShowList={() => { setRestoreModal(null); setBackupListOpen(true); }}
     />}
     {backupListOpen && <BackupListModal
