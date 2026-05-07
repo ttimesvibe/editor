@@ -651,9 +651,20 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             results.forEach((r, i) => {
               if (r.status === "fulfilled" && r.value) {
                 td[tabs[i]] = r.value;
+                // R3.d.2.d-diag — load 결과 내용 로그 (데이터 손실 영역 진단)
+                const v = r.value;
+                const keys = v ? Object.keys(v).join(",") : "null";
+                const sz = tabs[i] === "modify" ? `cards=${v?.cards?.length}` :
+                           tabs[i] === "guide" ? `hl=${v?.hl?.length}` :
+                           tabs[i] === "correction" ? `blocks=${v?.blocks?.length}` :
+                           tabs[i] === "highlight" ? `clips=${v?.clips?.length}` :
+                           tabs[i] === "visual" ? `guides=${v?.visualGuides?.length}` : "";
+                console.log(`[r3-diag] load LOADED ${tabs[i]}: keys=[${keys}] ${sz}`);
                 // CMS v2 — lastLoadedAt + version 추적 (B5)
                 if (r.value.savedAt) lastLoadedAt.current[tabs[i]] = r.value.savedAt;
                 if (r.value.version !== undefined) lastLoadedVersion.current[tabs[i]] = r.value.version;
+              } else if (r.status === "rejected") {
+                console.log(`[r3-diag] load REJECTED ${tabs[i]}: ${r.reason?.message || r.reason}`);
               }
             });
             const c = td.correction || {};
@@ -900,6 +911,17 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       saves.push(apiSaveTab(id, t, data, cfg, fn, optsFor(t)));
     }
     console.log(`[r3-diag] save BUILD: ${saves.length} tabs to PUT: [${tabsToSave.join(",")}]`);
+    // R3.d.2.d-diag — 실제 PUT payload 내용 로그 (데이터 손실 영역 진단)
+    for (const t of tabsToSave) {
+      const d = payloads[t];
+      const keys = d ? Object.keys(d).join(",") : "null";
+      const sizeHint = t === "modify" ? `cards=${d?.cards?.length}` :
+                       t === "guide" ? `hl=${d?.hl?.length}` :
+                       t === "correction" ? `blocks=${d?.blocks?.length}` :
+                       t === "highlight" ? `clips=${d?.clips?.length}` :
+                       t === "visual" ? `guides=${d?.visualGuides?.length}` : "";
+      console.log(`[r3-diag] save PAYLOAD ${t}: keys=[${keys}] ${sizeHint}`);
+    }
     if (saves.length === 0) { console.log("[r3-diag] save EARLY: saves empty (all tabs had falsy data)"); return; }
 
     // Promise.allSettled — 결과 분류
