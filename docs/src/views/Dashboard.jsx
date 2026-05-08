@@ -106,7 +106,8 @@ function ActionButton({ color, label, title, onClick, disabled }) {
 const TRASH_BAR_COLOR = "#8B8FA3";
 
 // 보드 grid 컬럼 폭 (header / row / trash row 모두 동일 — 상수로 통일)
-const BOARD_GRID = "40px 72px 1fr 160px 100px 100px 72px 96px";
+// 상태 컬럼 80px: "편집가이드"/"하이라이트" 5자 + padding 이 72px 채워 프로젝트명 침범했던 것 해소.
+const BOARD_GRID = "40px 80px 1fr 160px 100px 100px 72px 96px";
 
 // ═══════════════════════════════════════════════
 // DASHBOARD
