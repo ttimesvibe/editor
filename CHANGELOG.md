@@ -5,6 +5,30 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — 게시판 zebra + 좌측 status 막대 + 라이트모드 활성탭 버그 정리
+
+### 9. style(board): 라이트모드 활성탭 가시성 + zebra + 좌측 status 색 막대 + 코드 정리
+
+- **요청**: "게시판 탭에도 음영이나 색을 줘서 구분 + 스파게티 스캔"
+- **스파게티 스캔 (Dashboard.jsx 1064줄)**:
+  - **★ 라이트모드 미지원** — 필터 탭 활성 색 `#fff` (라이트 흰 배경에 흰 글자 = 안 보임), `#3A3F52` (very dark), `#5E6380 / #8B8FA3` 다수 하드코딩
+  - **★ Trash row + Project row 구조 중복** (~150줄) — 같은 grid, 컬럼 의미만 분기
+  - **★ 액션 버튼 색조 4곳 중복** (~80줄) — 복구/영구삭제/완료/삭제 같은 템플릿 인라인 반복
+  - 중간 — `gridTemplateColumns` 같은 string 3곳 중복
+- **사용자 결정**: (마) Zebra + 좌측 status 색 막대 / (iii) 시각 + 다크색 정리 + 추출 모두
+- **변경**:
+  - 필터 탭: `#fff` / `#3A3F52` → `C.tx` / `C.txD` / `C.txM` — 라이트모드 활성탭 검정으로 또렷이 보임 (★ 핵심 버그 fix)
+  - `BOARD_GRID` 상수 추출 (3곳 중복 → 1곳)
+  - `ActionButton` 헬퍼 — 4곳 인라인 → 1 컴포넌트 (color prop 받아 alpha hex suffix 로 hover/border 자동 계산: `+ "4D"` = 30%, `+ "26"` = 15%)
+  - `BoardRow` 래퍼 — Trash row + Project row 의 grid/hover/zebra/좌측 막대 통합. children 으로 column slot.
+  - **Zebra**: 짝수 idx 에 `C.glass` 배경, hover 와 충돌 회피 (mouseLeave 시 idx 기준 baseBg 복원). 라이트/다크 양쪽 적용 (가독성 둘 다 도움)
+  - **좌측 status 색 막대**: `borderLeft: 4px solid ${barColor}` — Project 는 `STATUS_MAP[step].color`, Trash 는 `TRASH_BAR_COLOR` (#8B8FA3)
+  - 다크색 hex (`#5E6380` / `#8B8FA3`) 게시판 영역 인라인 → `C.txD` / `C.txM`. 의미있는 색 정의 4건 (STATUS_MAP done, TRASH_BAR_COLOR, avatar 흰 글자, pagination 활성 흰 글자) 보존.
+- **회귀**: 빌드 통과. row 형식/액션 동작 동등 (인라인 → 컴포넌트만 추출). Zebra/좌측 막대는 시각 추가만.
+- **누더기 지수**: ~230줄 중복 → 0. 미래 row/액션 형식 변경 시 한 곳만 수정.
+
+---
+
 ## 2026-05-09 — Kanban 일정 라이트모드 색조 + 스파게티 정리
 
 ### 8. style(kanban): 라이트모드 카드 은은한 색조 + 다크색 하드코딩 정리 + DoneCard 추출

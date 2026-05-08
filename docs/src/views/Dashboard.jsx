@@ -75,6 +75,39 @@ function truncate(str, max) {
   return str.length > max ? str.slice(0, max) + "…" : str;
 }
 
+// ── Action Button (board row 우측 액션, 4종 색조 패턴 통합) ──
+// 이전: 복구/영구삭제/완료/삭제 4 곳 인라인 중복 (~80줄). hex + alpha hex suffix 활용.
+// alpha 변환: 0.30 → "4D" / 0.15 → "26" (8-bit hex alpha).
+function ActionButton({ color, label, title, onClick, disabled }) {
+  const bdAlpha = color + "4D"; // 30% — base border
+  const bgAlpha = color + "26"; // 15% — hover bg
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      style={{
+        background: "none", border: `1px solid ${bdAlpha}`,
+        cursor: disabled ? "not-allowed" : "pointer",
+        color, fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
+        borderRadius: 4, fontFamily: FN, fontWeight: 500,
+        transition: "background 0.15s, border-color 0.15s",
+      }}
+      onMouseEnter={e => { if (!disabled) { e.currentTarget.style.background = bgAlpha; e.currentTarget.style.borderColor = color; } }}
+      onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = bdAlpha; }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ── Board Row 색조 컬러 매핑 (status step → 좌측 막대 색) ──
+// STATUS_MAP 의 color 를 그대로 활용. trash 는 별 grey 색.
+const TRASH_BAR_COLOR = "#8B8FA3";
+
+// 보드 grid 컬럼 폭 (header / row / trash row 모두 동일 — 상수로 통일)
+const BOARD_GRID = "40px 72px 1fr 160px 100px 100px 72px 96px";
+
 // ═══════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════
@@ -354,9 +387,9 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
             <span style={{ fontSize: 12, color: C.tx, whiteSpace: "nowrap" }}>{display}</span>
           </>
         ) : (
-          <span style={{ color: "#5E6380", fontSize: 12 }}>-</span>
+          <span style={{ color: C.txD, fontSize: 12 }}>-</span>
         )}
-        <span style={{ fontSize: 10, color: "#5E6380", marginLeft: 2 }}>✎</span>
+        <span style={{ fontSize: 10, color: C.txD, marginLeft: 2 }}>✎</span>
       </div>
     );
   }
@@ -607,15 +640,15 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
                     background: "none", border: "none", cursor: "pointer",
                     padding: "8px 16px", fontFamily: FN,
                     fontSize: 13, fontWeight: isActive ? 600 : 400,
-                    color: isActive ? "#fff" : "#5E6380",
-                    borderBottom: isActive ? "2px solid #fff" : "2px solid transparent",
+                    color: isActive ? C.tx : C.txD,
+                    borderBottom: isActive ? `2px solid ${C.tx}` : "2px solid transparent",
                     transition: "color 0.15s, border-color 0.15s",
                   }}
                 >
                   {tab.label}
                   <span style={{
                     marginLeft: 5, fontSize: 11,
-                    color: isActive ? "#8B8FA3" : "#3A3F52",
+                    color: isActive ? C.txM : C.txD,
                   }}>
                     {count}
                   </span>
@@ -646,10 +679,10 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
           {/* Table Header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
-            gap: 0, padding: "10px 12px",
+            gridTemplateColumns: BOARD_GRID,
+            gap: 0, padding: "10px 12px 10px 16px",  // +좌측 4px 상쇄 (row 의 좌측 status bar 너비)
             borderBottom: `1px solid ${C.bd}`,
-            fontSize: 11, fontWeight: 600, color: "#5E6380",
+            fontSize: 11, fontWeight: 600, color: C.txD,
             textTransform: "uppercase", letterSpacing: 0.5,
           }}>
             <span>#</span>
@@ -664,19 +697,19 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
 
           {/* Loading State */}
           {((isTrashMode && trashLoading) || (!isTrashMode && loading)) && (
-            <div style={{ padding: "40px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
+            <div style={{ padding: "40px 0", textAlign: "center", color: C.txD, fontSize: 13 }}>
               불러오는 중...
             </div>
           )}
 
           {/* Empty State */}
           {!loading && !isTrashMode && projects.length === 0 && (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
+            <div style={{ padding: "60px 0", textAlign: "center", color: C.txD, fontSize: 13 }}>
               {search ? "검색 결과가 없습니다." : "프로젝트가 없습니다."}
             </div>
           )}
           {!trashLoading && isTrashMode && searchedTrash.length === 0 && (
-            <div style={{ padding: "60px 0", textAlign: "center", color: "#5E6380", fontSize: 13 }}>
+            <div style={{ padding: "60px 0", textAlign: "center", color: C.txD, fontSize: 13 }}>
               {search ? "검색 결과가 없습니다." : "휴지통이 비어있습니다."}
             </div>
           )}
@@ -686,25 +719,12 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
             const rowNum = searchedTrash.length - idx;
             const editors = t.editors || [];
             return (
-              <div
-                key={t.id || idx}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
-                  gap: 0, padding: "12px 12px",
-                  borderBottom: `1px solid ${C.bd}`,
-                  alignItems: "center",
-                  cursor: "default",
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = C.glassHover}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-              >
-                <span style={{ fontSize: 12, color: "#5E6380", fontVariantNumeric: "tabular-nums" }}>{rowNum}</span>
+              <BoardRow key={t.id || idx} idx={idx} barColor={TRASH_BAR_COLOR}>
+                <span style={{ fontSize: 12, color: C.txD, fontVariantNumeric: "tabular-nums" }}>{rowNum}</span>
                 <span style={{
                   display: "inline-block", padding: "2px 8px", borderRadius: 4,
                   fontSize: 11, fontWeight: 600, lineHeight: "18px",
-                  color: "#8B8FA3", background: "rgba(139,143,163,0.15)",
+                  color: TRASH_BAR_COLOR, background: TRASH_BAR_COLOR + "26",
                 }}>삭제됨</span>
                 <span style={{
                   fontSize: 13, fontWeight: 500, color: C.tx,
@@ -714,47 +734,31 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
                   {truncate(t.fn || "제목 없음", 40)}
                 </span>
                 {renderEditors(editors, t.id, null)}
-                <span style={{ fontSize: 12, color: "#8B8FA3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                <span style={{ fontSize: 12, color: C.txM, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                       title={t.deletedBy || ""}>
                   {(t.deletedBy || "-").split("@")[0]}
                 </span>
-                <span style={{ fontSize: 12, color: "#8B8FA3" }}>
+                <span style={{ fontSize: 12, color: C.txM }}>
                   {typeof t.daysInTrash === "number" ? `${t.daysInTrash}일` : "-"}
                 </span>
                 <div style={{ textAlign: "right", lineHeight: 1.4 }}>
-                  <div style={{ fontSize: 11, color: "#5E6380" }}>{shortDate(t.deletedAt)}</div>
+                  <div style={{ fontSize: 11, color: C.txD }}>{shortDate(t.deletedAt)}</div>
                 </div>
                 <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); restoreProject(t.id); }}
+                  <ActionButton
+                    color="#22C55E"
+                    label="복구"
                     title="프로젝트 복구"
-                    style={{
-                      background: "none", border: `1px solid rgba(34,197,94,0.3)`, cursor: "pointer",
-                      color: "#22C55E", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
-                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
-                      transition: "background 0.15s, border-color 0.15s",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(34,197,94,0.15)"; e.currentTarget.style.borderColor = "#22C55E"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(34,197,94,0.3)"; }}
-                  >
-                    복구
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setPurgingProject(t); }}
+                    onClick={(e) => { e.stopPropagation(); restoreProject(t.id); }}
+                  />
+                  <ActionButton
+                    color="#EF4444"
+                    label="영구삭제"
                     title="영구 삭제 (되돌릴 수 없음)"
-                    style={{
-                      background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
-                      color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
-                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
-                      transition: "background 0.15s, border-color 0.15s",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
-                  >
-                    영구삭제
-                  </button>
+                    onClick={(e) => { e.stopPropagation(); setPurgingProject(t); }}
+                  />
                 </div>
-              </div>
+              </BoardRow>
             );
           })}
 
@@ -765,31 +769,26 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
             const isDone = proj.status === "done";
             const rowNum = total - ((page - 1) * PER_PAGE + idx);
             const editors = proj.editors || (proj.editor ? [proj.editor] : []);
+            const statusKey = isDone ? "done" : step;
+            const barColor = STATUS_MAP[statusKey]?.color || TRASH_BAR_COLOR;
+            const canDeleteProj = proj.creatorEmail === authUser?.email || authUser?.role === "admin";
 
             return (
-              <div
+              <BoardRow
                 key={proj.id || idx}
+                idx={idx}
+                barColor={barColor}
                 onClick={() => onSelectProject(proj.id)}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "40px 72px 1fr 160px 100px 100px 72px 96px",
-                  gap: 0, padding: "12px 12px",
-                  borderBottom: `1px solid ${C.bd}`,
-                  alignItems: "center",
-                  cursor: "pointer",
-                  opacity: (isDone && filter !== "done") ? 0.35 : 1,
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = C.glassHover}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                clickable
+                opacity={(isDone && filter !== "done") ? 0.35 : 1}
               >
                 {/* Row Number */}
-                <span style={{ fontSize: 12, color: "#5E6380", fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ fontSize: 12, color: C.txD, fontVariantNumeric: "tabular-nums" }}>
                   {rowNum}
                 </span>
 
                 {/* Status Badge — 완료 탭에서 "완료" 로, 그 외엔 현재 작업 단계로 */}
-                {renderStatusBadge(isDone ? "done" : step)}
+                {renderStatusBadge(statusKey)}
 
                 {/* Project Name */}
                 <span style={{
@@ -804,7 +803,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
                 {renderEditors(editors, proj.id, proj)}
 
                 {/* Current Step */}
-                <span style={{ fontSize: 12, color: "#8B8FA3" }}>
+                <span style={{ fontSize: 12, color: C.txM }}>
                   {STEP_LABELS[step] || step}
                 </span>
 
@@ -813,44 +812,28 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
 
                 {/* Date: 등록일 + 최종수정 */}
                 <div style={{ textAlign: "right", lineHeight: 1.4 }}>
-                  <div style={{ fontSize: 11, color: "#5E6380" }}>{shortDate(proj.createdAt)}</div>
-                  <div style={{ fontSize: 10, color: "#3A3F52" }}>{proj.updatedAt ? relativeDate(proj.updatedAt) : "-"}</div>
+                  <div style={{ fontSize: 11, color: C.txD }}>{shortDate(proj.createdAt)}</div>
+                  <div style={{ fontSize: 10, color: C.txD }}>{proj.updatedAt ? relativeDate(proj.updatedAt) : "-"}</div>
                 </div>
 
                 {/* Actions: 완료 + 삭제 */}
                 <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleDone(proj.id, isDone); }}
+                  <ActionButton
+                    color={isDone ? TRASH_BAR_COLOR : "#22C55E"}
+                    label={isDone ? "복원" : "완료"}
                     title={isDone ? "진행중으로 되돌리기" : "완료 처리"}
-                    style={{
-                      background: "none", border: `1px solid ${isDone ? "rgba(139,143,163,0.3)" : "rgba(34,197,94,0.3)"}`, cursor: "pointer",
-                      color: isDone ? "#8B8FA3" : "#22C55E", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
-                      borderRadius: 4, fontFamily: FN, fontWeight: 500,
-                      transition: "background 0.15s, border-color 0.15s",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = isDone ? "rgba(139,143,163,0.15)" : "rgba(34,197,94,0.15)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
-                  >
-                    {isDone ? "복원" : "완료"}
-                  </button>
-                  {(proj.creatorEmail === authUser?.email || authUser?.role === "admin") && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
+                    onClick={(e) => { e.stopPropagation(); toggleDone(proj.id, isDone); }}
+                  />
+                  {canDeleteProj && (
+                    <ActionButton
+                      color="#EF4444"
+                      label="삭제"
                       title="프로젝트 삭제"
-                      style={{
-                        background: "none", border: `1px solid rgba(239,68,68,0.3)`, cursor: "pointer",
-                        color: "#EF4444", fontSize: 11, padding: "2px 8px", lineHeight: 1.4,
-                        borderRadius: 4, fontFamily: FN, fontWeight: 500,
-                        transition: "background 0.15s, border-color 0.15s",
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.15)"; e.currentTarget.style.borderColor = "#EF4444"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"; }}
-                    >
-                      삭제
-                    </button>
+                      onClick={(e) => { e.stopPropagation(); setDeletingProject(proj); }}
+                    />
                   )}
                 </div>
-              </div>
+              </BoardRow>
             );
           })}
         </div>
@@ -1059,6 +1042,40 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
         </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// BOARD ROW (게시판 row 공통 wrapper — zebra + 좌측 status 색 막대)
+// ═══════════════════════════════════════════════
+// 이전: Project row + Trash row 가 같은 grid 구조를 두 곳에 인라인 작성 (~150줄 중복).
+// 변경 (2026-05-09): grid layout / hover / zebra / 좌측 status 막대 통합. children 으로 column slot.
+//   barColor: 좌측 4px status 색 막대. STATUS_MAP[step].color (project) 또는 TRASH_BAR_COLOR (trash).
+//   zebra: 짝수 idx 에 C.glass 배경. 라이트/다크 모두 적용 — 가독성 양쪽 모두 도움.
+//   hover 와 zebra 충돌 회피: mouseLeave 시 zebra 색 복원 (idx 기준).
+function BoardRow({ idx, barColor, onClick, clickable, opacity, children }) {
+  const isZebra = idx % 2 === 1;  // 0 transparent / 1 C.glass — 첫 row 는 깨끗
+  const baseBg = isZebra ? C.glass : "transparent";
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        display: "grid",
+        gridTemplateColumns: BOARD_GRID,
+        gap: 0, padding: "12px 12px",
+        borderLeft: `4px solid ${barColor || "transparent"}`,  // 좌측 status 색 막대
+        borderBottom: `1px solid ${C.bd}`,
+        alignItems: "center",
+        cursor: clickable ? "pointer" : "default",
+        opacity: opacity ?? 1,
+        background: baseBg,
+        transition: "background 0.12s",
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = C.glassHover}
+      onMouseLeave={e => e.currentTarget.style.background = baseBg}
+    >
+      {children}
     </div>
   );
 }
