@@ -61,14 +61,17 @@ export function SaveFailModal({ failedTabs, sessionId, fn, payload, onRetry, onC
   );
 }
 
-export function ConflictModal({ tab, serverUpdatedBy, onMerge, onAcceptServer, onForceMine, onClose }) {
+// M4 — ConflictModal 2 옵션 영역 (헌장 §4 정식 충족)
+// 옛 onMerge 옵션 영역 폐기 (clientMergeTabData 영역의 코드 보존하되 UX 미노출).
+// 자기 sub 영역은 자동 통합 (App.jsx 의 saveDirtyTabsToKV 영역에서 처리, 본 modal 영역 X).
+export function ConflictModal({ tab, serverUpdatedBy, onAcceptServer, onForceMine, onClose }) {
   const who = serverUpdatedBy?.name || serverUpdatedBy?.sub || "다른 편집자";
   return (
     <div style={OVERLAY_STYLE}>
       <div style={PANEL_STYLE}>
         <div style={{ fontSize: 40, textAlign: "center", marginBottom: 12 }}>⚠️</div>
-        <h2 style={{ fontSize: 24, fontWeight: 800, color: "#D97706", textAlign: "center", margin: "0 0 12px" }}>
-          다른 편집자가 먼저 저장했습니다
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: "#D97706", textAlign: "center", margin: "0 0 12px", lineHeight: 1.4 }}>
+          다른 사용자와의 동시 저장이 일어났습니다.<br/>30초 이내의 변경사항이 일어났습니다.
         </h2>
         <p style={{ fontSize: 15, color: "#374151", textAlign: "center", margin: "0 0 8px", lineHeight: 1.6 }}>
           <b>{who}</b>님이 <b>{tabLabel(tab)}</b> 탭을 수정했습니다.
@@ -76,18 +79,16 @@ export function ConflictModal({ tab, serverUpdatedBy, onMerge, onAcceptServer, o
         <p style={{ fontSize: 14, color: "#6B7280", textAlign: "center", margin: "0 0 20px" }}>
           내 변경사항은 안전하게 백업되었습니다.<br/>어떻게 처리하시겠습니까?
         </p>
-        <button onClick={onMerge} style={{
-          width: "100%", padding: "14px 16px", marginBottom: 10, border: "none", borderRadius: 10,
-          background: "#16A34A", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer",
-        }}>✓ 양쪽 합쳐서 저장하기 (권장)</button>
-        <button onClick={onAcceptServer} style={{
-          width: "100%", padding: "12px 16px", marginBottom: 10, border: "1px solid #D1D5DB", borderRadius: 10,
-          background: "#fff", color: "#374151", fontSize: 14, cursor: "pointer",
-        }}>서버 것 받기 (내 변경 무시)</button>
+        {/* 옵션 1 — 내 저장 사항 강제저장 */}
         <button onClick={onForceMine} style={{
-          width: "100%", padding: "12px 16px", marginBottom: 10, border: "1px solid #D1D5DB", borderRadius: 10,
-          background: "#fff", color: "#374151", fontSize: 14, cursor: "pointer",
-        }}>내 것 강제 저장 (서버 것 덮어쓰기)</button>
+          width: "100%", padding: "14px 16px", marginBottom: 10, border: "none", borderRadius: 10,
+          background: "#2563EB", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer",
+        }}>1. 내 저장 사항을 강제저장한다</button>
+        {/* 옵션 2 — 내 변경 사항 이전의 상황으로 동기화 */}
+        <button onClick={onAcceptServer} style={{
+          width: "100%", padding: "14px 16px", marginBottom: 10, border: "1px solid #D1D5DB", borderRadius: 10,
+          background: "#fff", color: "#374151", fontSize: 15, fontWeight: 700, cursor: "pointer",
+        }}>2. 내 변경 사항 이전의 상황으로 동기화한다</button>
         <button onClick={onClose} style={{
           width: "100%", padding: "10px 16px", border: "1px solid #D1D5DB", borderRadius: 10,
           background: "#fff", color: "#9CA3AF", fontSize: 13, cursor: "pointer",

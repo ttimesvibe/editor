@@ -1043,8 +1043,55 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       for (const c of conflicts) {
         createEmergencyBackup({ type: "conflict", sessionId: id, fn, tab: c.tab, payload: c.payload, reason: "conflict 409" });
       }
-      // 첫 충돌만 모달 (다중 충돌 시 한 번에 한 탭)
-      const c = conflicts[0];
+
+      // M4 — 자기 sub auto-merge 영역 (헌장 §2 (b) 정식 충족)
+      // "같은 sub 자기 자신 충돌: 자동 통합. ConflictModal 미노출."
+      // 정책: 내 영역의 변경 영역 보존 (force save) — 운영 약속 영역 (다중 디바이스 동시 X)
+      const selfSubConflicts = [];
+      const otherSubConflicts = [];
+      for (const c of conflicts) {
+        if (c.reason?.serverUpdatedBy?.sub === authUser?.email) selfSubConflicts.push(c);
+        else otherSubConflicts.push(c);
+      }
+
+      // 자기 sub 영역 — 자동 통합 (force save). modal 영역 X.
+      const selfSubFailed = [];
+      for (const c of selfSubConflicts) {
+        try {
+          const r = await apiSaveTab(id, c.tab, c.payload, cfg, fn, {
+            baseSavedAt: c.reason.serverSavedAt,
+            baseVersion: c.reason.serverVersion,
+            force: true,
+          });
+          if (r?.savedAt) lastLoadedAt.current[c.tab] = r.savedAt;
+          if (r?.version !== undefined) lastLoadedVersion.current[c.tab] = r.version;
+          dirtyTabs.current.delete(c.tab);
+          console.log(`[r3-diag] M4 self-sub auto-merge: ${c.tab} (force save success)`);
+        } catch (e) {
+          console.warn(`[M4] self-sub auto-merge failed: ${c.tab} — ${e?.message || e}`);
+          selfSubFailed.push({ tab: c.tab, error: e, payload: c.payload });
+          // W2 영역 보호 (이미 createEmergencyBackup 영역에서 박제됨)
+        }
+      }
+      // selfSubFailed 영역은 후속 throw 영역의 failed 영역에 합산
+      failed.push(...selfSubFailed);
+
+      // M4 — 다른 sub 영역만 modal 영역 (헌장 §4 — 2 옵션). 자기 sub 영역 종결 시 modal 영역 X.
+      if (otherSubConflicts.length === 0) {
+        // 자기 sub 영역만 — 후속 modal 영역 X. failed 영역만 후속 throw 영역.
+        // (conflicts 영역의 후속 영역 — modal 영역 + throw 영역 — skip)
+        // throw 영역 — failed 영역만 평가 영역으로 전환
+        if (failed.length > 0) {
+          // failed 영역의 후속 처리 영역은 위 (L1042 위) 의 영역 — 이미 처리됨
+          const err = new Error(`save partial: ${failed.length} failed, 0 conflicts`);
+          err.failed = failed; err.conflicts = [];
+          throw err;
+        }
+        return;
+      }
+
+      // 다른 sub 영역의 첫 충돌만 모달 (다중 영역 시 한 번에 한 탭)
+      const c = otherSubConflicts[0];
       const applyServerToState = (tab, serverData) => {
         // R3.e — 11 탭 동등 dispatch (헌장 §5 코드 평탄화 #3 / N1 결함 해소).
         // 이전 결함: 자식 7 탭 (highlight/setgen/visual/modify/metadata/manuscript/subtitle)
@@ -1070,32 +1117,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         if (serverData.savedAt) lastLoadedAt.current[tab] = serverData.savedAt;
         if (serverData.version !== undefined) lastLoadedVersion.current[tab] = serverData.version;
       };
+      // M4 — ConflictModal 2 옵션 (헌장 §4)
+      // "옵션 1: 내 저장 사항을 강제저장한다 / 옵션 2: 내 변경 사항 이전의 상황으로 동기화한다"
+      // (옛 onMerge 영역 폐기 — clientMergeTabData 영역의 코드 보존하되 UX 미노출)
       setConflictModal({
         tab: c.tab,
         serverUpdatedBy: c.reason?.serverUpdatedBy,
-        onMerge: async () => {
-          try {
-            const merged = clientMergeTabData(c.reason.serverData || {}, c.payload, c.tab);
-            await apiSaveTab(id, c.tab, merged, cfg, fn, {
-              baseSavedAt: c.reason.serverSavedAt,
-              baseVersion: c.reason.serverVersion,
-              force: true,
-            });
-            applyServerToState(c.tab, merged);
-            dirtyTabs.current.delete(c.tab);
-            setConflictModal(null);
-            setOtherUserToast({ tab: c.tab, by: "양쪽 합침 완료", at: new Date().toISOString(), type: "merged" });
-          } catch (e) {
-            console.error("[merge] failed:", e?.message || e);
-            setErr("합치기에 실패했습니다: " + (e?.message || ""));
-            setConflictModal(null);
-          }
-        },
-        onAcceptServer: () => {
-          applyServerToState(c.tab, c.reason.serverData || {});
-          dirtyTabs.current.delete(c.tab);
-          setConflictModal(null);
-        },
+        // 옵션 1 — 내 저장 사항 강제저장
         onForceMine: async () => {
           try {
             await apiSaveTab(id, c.tab, c.payload, cfg, fn, {
@@ -1110,6 +1138,12 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             setErr("강제 저장에 실패했습니다: " + (e?.message || ""));
             setConflictModal(null);
           }
+        },
+        // 옵션 2 — 내 변경 사항 이전의 상황으로 동기화 (서버 영역 적용)
+        onAcceptServer: () => {
+          applyServerToState(c.tab, c.reason.serverData || {});
+          dirtyTabs.current.delete(c.tab);
+          setConflictModal(null);
         },
         onClose: () => setConflictModal(null),
       });
