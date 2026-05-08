@@ -740,17 +740,19 @@ async function handleSessionHeartbeat(id, body, env, headers) {
   for (const [k, v] of Object.entries(active)) {
     if (now - (v.lastBeat || 0) > ACTIVE_TTL_MS) delete active[k];
   }
-  // upsert (M6 다중 탭 지원)
-  const prev = active[userSub] || { name: userName, tabs: [], lastBeat: 0 };
-  const tabs = new Set(prev.tabs || []);
-  if (tab) tabs.add(tab);
-  active[userSub] = { name: userName, tabs: [...tabs], lastBeat: now };
+  // M6 — N5 결함 해소: tabs 누적 영역 → 사용자의 현재 탭 1개로 교체 (헌장 §4)
+  active[userSub] = { name: userName, tab: tab || null, lastBeat: now };
   await env.SESSIONS.put(key, JSON.stringify(active), { expirationTtl: ACTIVE_KV_TTL_S });
 
   // 응답에 active list 동봉 — 추가 read 0 (Phase 2 폴링과 통합)
+  // M6 — 호환 영역: 옛 KV 의 tabs[] 영역은 v.tabs?.[v.tabs.length-1] 영역으로 fallback
   return new Response(JSON.stringify({
     success: true,
-    active: Object.entries(active).map(([sub, v]) => ({ sub, name: v.name, tabs: v.tabs })),
+    active: Object.entries(active).map(([sub, v]) => ({
+      sub,
+      name: v.name,
+      tab: v.tab || (v.tabs?.length ? v.tabs[v.tabs.length - 1] : null),
+    })),
   }), { headers });
 }
 

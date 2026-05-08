@@ -2166,7 +2166,11 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       borderRadius: 20, padding: "6px 14px", fontSize: 13, color: "#16A34A",
       boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
     }}>
-      👥 동시 편집: {activeUsers.map(u => `${u.name}${u.tabs?.length > 1 ? ` (탭 ${u.tabs.length}개)` : ""}`).join(", ")}
+      {/* M6 — 헌장 §4 active-users UI 단계 A 정식: "박편집자 → visual" 형식 */}
+      👥 동시 편집: {activeUsers.map(u => {
+        const t = u.tab || (u.tabs?.length ? u.tabs[u.tabs.length - 1] : null);  // 호환 영역
+        return t ? `${u.name} → ${tabLabel(t)}` : u.name;
+      }).join(", ")}
     </div>}
     {/* CMS v2 — 묶음 ⑫ otherUserToast (Phase 2 폴링) */}
     {otherUserToast && <div style={{
