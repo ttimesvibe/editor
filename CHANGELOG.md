@@ -5,6 +5,28 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — Kanban 일정 라이트모드 색조 + 스파게티 정리
+
+### 8. style(kanban): 라이트모드 카드 은은한 색조 + 다크색 하드코딩 정리 + DoneCard 추출
+
+- **요청**: "일정 라이트모드가 너무 다 하얀색. 각 카드에 은은한 색을 입히고 싶다 + 일정탭 코드 스파게티 스캔"
+- **스파게티 스캔 결과** (KanbanView.jsx 802 줄):
+  - **주요 결함 1** — 다크색 hex 직박 (라이트/다크 분기 X): `#0F1117 / #454B66 / #5E6380 / #8B90A5 / #B8BDD1`. 라이트모드에서 카드 안 검정 영역으로 튐 (사용자 보고와 직결)
+  - **주요 결함 2** — Done 컬럼 sub-card 인라인 중복 (L453-486)
+  - 중간 결함 — `allRoles` 펼치기 패턴 두 곳, `+ "20"` 알파 suffix 산재 (over-engineering 위험으로 미처리)
+- **사용자 결정**: (a) 라이트모드만 색조 / (가) 컬럼 색 source / (iii) 본 작업 + 1번 + 2번 결함 정리
+- **변경**:
+  - `styles.js`: `bdHover` 추가 (DARK `#454B66` / LIGHT `#A0A4B5`) — hover 식별 보더
+  - `KanbanView.jsx`:
+    - 하드코딩 hex 색을 `C.txD / C.txM / C.bg / C.bdHover / C.ac / C.acS` 로 교체 (의미있는 색 정의 4건은 보존)
+    - `DoneCard` 컴포넌트 추출 — shoot/project 통합, 인라인 중복 제거
+    - `stageColor(stage)` + `cardBg(stage)` 헬퍼 신설 — 라이트모드 한정 컬럼 색 5% alpha 적용 (`+ "0d"`), 다크모드는 `C.sf` 그대로
+    - `ProjectCard` 시그니처에 `stage` prop 추가 (호출처 KanbanView 에서 col.key 전달)
+    - 4종 카드 (Shoot / Transition / Project / Done) 모두 `cardBg(stage)` 사용
+- **회귀**: 빌드 통과. 다크모드 동작 동등 (cardBg 가 `C.sf` 반환). 라이트모드만 카드별 컬럼 색 옅게 입힘.
+
+---
+
 ## 2026-05-09 — 내보내기 HTML 통합 가이드 섹션 추가 + 카드 렌더 헬퍼 추출
 
 ### 7. feat(export): 🧩 통합 가이드 섹션 신설 (편집자 요청)

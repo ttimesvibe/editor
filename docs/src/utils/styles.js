@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════
 
 export const DARK_THEME = {
-  bg:"#0F1117",sf:"#181B25",bd:"#2A2E3B",
+  bg:"#0F1117",sf:"#181B25",bd:"#2A2E3B",bdHover:"#454B66",
   tx:"#E4E6ED",txM:"#8B8FA3",txD:"#5C6078",
   ac:"#4A6CF7",acS:"rgba(74,108,247,0.12)",
   fBg:"rgba(251,191,36,0.18)",fTx:"#FBBF24",fSk:"#D4A017",
@@ -18,7 +18,7 @@ export const DARK_THEME = {
   linkTx:"#60A5FA",shadow:"rgba(0,0,0,0.4)",
 };
 export const LIGHT_THEME = {
-  bg:"#F8F9FB",sf:"#FFFFFF",bd:"#E2E4E9",
+  bg:"#F8F9FB",sf:"#FFFFFF",bd:"#E2E4E9",bdHover:"#A0A4B5",
   tx:"#1A1D27",txM:"#5C6078",txD:"#8B8FA3",
   ac:"#4A6CF7",acS:"rgba(74,108,247,0.08)",
   fBg:"rgba(251,191,36,0.12)",fTx:"#B45309",fSk:"#92400E",

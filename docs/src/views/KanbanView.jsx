@@ -49,6 +49,21 @@ function avatarColor(name) {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
+// stage → 컬럼 색 lookup (카드 색조용)
+function stageColor(stage) {
+  const col = COLUMNS.find(c => c.key === stage);
+  return col ? col.color : "#5E6380";
+}
+
+// 카드 배경 — 라이트모드만 컬럼 색을 매우 옅게 (~5% alpha) 입혀 시각적 구분.
+// 다크모드는 surface 그대로 (C.sf) — 색조 거의 안 보일 만큼 흰 배경 위가 효과적이라 라이트 한정.
+// 라이트모드 감지: C.bg 가 LIGHT_THEME 의 #F8F9FB 면 라이트로 판단.
+function cardBg(stage) {
+  const isLight = C.bg === "#F8F9FB";
+  if (!isLight) return C.sf;
+  return stageColor(stage) + "0d";  // ~5% alpha — 흰 배경 위 옅은 색조
+}
+
 function formatShootDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -326,7 +341,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
   // ═══ Render ═══
 
   if (loading && shoots.length === 0) {
-    return <div style={{ padding: 40, textAlign: "center", color: "#5E6380", fontSize: 13 }}>불러오는 중...</div>;
+    return <div style={{ padding: 40, textAlign: "center", color: C.txD, fontSize: 13 }}>불러오는 중...</div>;
   }
 
   return (
@@ -356,7 +371,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                 <span style={{ fontSize: 13, fontWeight: 700, color: C.tx }}>{col.label}</span>
               </div>
               <span style={{
-                fontSize: 11, color: "#5E6380", background: C.glass, padding: "2px 8px", borderRadius: 10,
+                fontSize: 11, color: C.txD, background: C.glass, padding: "2px 8px", borderRadius: 10,
               }}>{colCounts[col.key]}</span>
             </div>
 
@@ -371,10 +386,10 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
               {col.key === "pre-production" && (
                 <div onClick={onNewShoot} style={{
                   border: `1px dashed ${C.bd}`, padding: 10, textAlign: "center",
-                  fontSize: 12, color: "#5E6380", cursor: "pointer",
+                  fontSize: 12, color: C.txD, cursor: "pointer",
                 }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#454B66"; e.currentTarget.style.color = "#8B90A5"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = "#5E6380"; }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.bdHover; e.currentTarget.style.color = C.txM; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = C.txD; }}
                 >
                   + 촬영 일정 추가
                 </div>
@@ -418,6 +433,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       key={item.data.id}
                       project={item.data}
                       shoots={shoots}
+                      stage={col.key}
                       onClick={() => onSelectProject(item.data.id)}
                       onDragStart={(e) => handleDragStart(e, "project", item.data.id)}
                       onDragEnd={handleDragEnd}
@@ -442,7 +458,7 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                     <div
                       onClick={() => setExpandedDone(prev => ({ ...prev, [mk]: !prev[mk] }))}
                       style={{
-                        padding: "10px 16px", fontSize: 12, color: "#5E6380", cursor: "pointer",
+                        padding: "10px 16px", fontSize: 12, color: C.txD, cursor: "pointer",
                         display: "flex", alignItems: "center", justifyContent: "space-between",
                         borderTop: `1px solid ${C.bd}`, marginTop: 8,
                       }}
@@ -450,40 +466,14 @@ export function KanbanView({ authUser, cfg, onSelectProject, onNewShoot, onNewPr
                       <span>{label} {items.length}건</span>
                       <span>{isExpanded ? "▾" : "▸"}</span>
                     </div>
-                    {isExpanded && items.map(item => {
-                      if (item.type === "shoot") {
-                        return (
-                          <div key={item.data.id}
-                            onClick={() => handleShootEditClick(item.data.id)}
-                            style={{
-                              background: C.sf, border: `1px solid ${C.bd}`, padding: 12, marginBottom: 6,
-                              opacity: 0.6, cursor: "pointer",
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.borderColor = "#454B66"}
-                            onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
-                          >
-                            <div style={{ fontSize: 13, fontWeight: 600, color: C.tx }}>{item.data.guest}</div>
-                            <div style={{ fontSize: 11, color: "#5E6380", marginTop: 2 }}>{item.data.topic}</div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div key={item.data.id} onClick={() => onSelectProject(item.data.id)} style={{
-                          background: C.sf, border: `1px solid ${C.bd}`, padding: 12, marginBottom: 6,
-                          cursor: "pointer", opacity: 0.6,
-                        }}
-                          onMouseEnter={e => e.currentTarget.style.borderColor = "#454B66"}
-                          onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
-                        >
-                          <div style={{ fontSize: 13, fontWeight: 600, color: C.tx }}>
-                            {item.data.fn || item.data.filename || item.data.name || "제목 없음"}
-                          </div>
-                          <div style={{ fontSize: 11, color: "#5E6380", marginTop: 2 }}>
-                            {formatShootDate(item.data.updatedAt || item.data.createdAt)}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {isExpanded && items.map(item => (
+                      <DoneCard
+                        key={item.data.id}
+                        item={item}
+                        onSelectProject={onSelectProject}
+                        onSelectShoot={handleShootEditClick}
+                      />
+                    ))}
                   </div>
                 );
               })}
@@ -537,11 +527,11 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
       onDragEnd={onDragEnd}
       onClick={onClick}
       style={{
-        background: C.sf, border: `1px solid ${C.bd}`, padding: 14,
+        background: cardBg(stage), border: `1px solid ${C.bd}`, padding: 14,
         cursor: "pointer", transition: "border-color 0.1s, opacity 0.2s",
         opacity: isDragging ? 0.4 : 1,
       }}
-      onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = "#454B66"; }}
+      onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = C.bdHover; }}
       onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
     >
       {/* Tags + Episode badge row */}
@@ -568,12 +558,12 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
 
       {/* Topic */}
       {shoot.topic && (
-        <div style={{ fontSize: 12, color: "#8B90A5", marginBottom: 8 }}>{shoot.topic}</div>
+        <div style={{ fontSize: 12, color: C.txM, marginBottom: 8 }}>{shoot.topic}</div>
       )}
 
       {/* Bottom: date + avatars */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "#B8BDD1" }}>{formatShootDate(shoot.shootDate)}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.txM }}>{formatShootDate(shoot.shootDate)}</span>
         <div style={{ display: "flex" }}>
           {allRoles.slice(0, 4).map((r, i) => (
             <span key={r.email || i} style={{
@@ -595,7 +585,7 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
         <div style={{
           display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8,
           paddingTop: 8, borderTop: `1px solid ${C.bd}`,
-          fontSize: 10, color: "#8B90A5",
+          fontSize: 10, color: C.txM,
         }}>
           {["filming","progress","scriptEdit","videoEdit"].map((roleKey, ri) => {
             const members = shoot.roles?.[roleKey] || [];
@@ -619,11 +609,11 @@ function ShootCard({ shoot, stage, onClick, onMoveStage, onDragStart, onDragEnd,
           style={{
             marginTop: 10, padding: "7px 0", textAlign: "center",
             border: `1px solid ${C.bd}`, fontSize: 11, fontWeight: 600,
-            color: "#8B90A5", cursor: "pointer", background: "#0F1117",
+            color: C.txM, cursor: "pointer", background: C.bg,
             transition: "all 0.15s",
           }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = "#4A6CF7"; e.currentTarget.style.color = "#4A6CF7"; e.currentTarget.style.background = "#4A6CF710"; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = "#8B90A5"; e.currentTarget.style.background = "#0F1117"; }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = C.ac; e.currentTarget.style.color = C.ac; e.currentTarget.style.background = C.acS; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = C.txM; e.currentTarget.style.background = C.bg; }}
         >
           {stageAction.label} →
         </div>
@@ -643,7 +633,7 @@ function TransitionCard({ shoot, childProjects, onSelectProject, onNewProject, o
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       style={{
-        background: C.sf, border: `1px solid #7C3AED40`,
+        background: cardBg("editing"), border: `1px solid #7C3AED40`,
         borderLeft: "3px solid #A78BFA", padding: 14,
         cursor: "grab", transition: "opacity 0.2s",
         opacity: isDragging ? 0.4 : 1,
@@ -672,10 +662,10 @@ function TransitionCard({ shoot, childProjects, onSelectProject, onNewProject, o
                 draggable={false}
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
-                  padding: "8px 10px", background: "#0F1117", border: `1px solid ${C.bd}`,
+                  padding: "8px 10px", background: C.bg, border: `1px solid ${C.bd}`,
                   cursor: "pointer", transition: "border-color 0.1s",
                 }}
-                onMouseEnter={e => e.currentTarget.style.borderColor = "#454B66"}
+                onMouseEnter={e => e.currentTarget.style.borderColor = C.bdHover}
                 onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
               >
                 <span style={{ fontSize: 13, fontWeight: 600, flex: 1, color: C.tx }}>
@@ -707,11 +697,11 @@ function TransitionCard({ shoot, childProjects, onSelectProject, onNewProject, o
         draggable={false}
         style={{
           marginTop: 8, padding: "6px 0", textAlign: "center",
-          border: `1px dashed ${C.bd}`, fontSize: 11, color: "#5E6380",
+          border: `1px dashed ${C.bd}`, fontSize: 11, color: C.txD,
           cursor: "pointer",
         }}
-        onMouseEnter={e => { e.currentTarget.style.borderColor = "#454B66"; e.currentTarget.style.color = "#8B90A5"; }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = "#5E6380"; }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = C.bdHover; e.currentTarget.style.color = C.txM; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = C.bd; e.currentTarget.style.color = C.txD; }}
       >
         + 원고 프로젝트 추가
       </div>
@@ -723,7 +713,7 @@ function TransitionCard({ shoot, childProjects, onSelectProject, onNewProject, o
 // PROJECT CARD (독립 편)
 // ═══════════════════════════════════════════════
 
-function ProjectCard({ project, shoots, onClick, onDragStart, onDragEnd, isDragging }) {
+function ProjectCard({ project, shoots, stage, onClick, onDragStart, onDragEnd, isDragging }) {
   const step = project.currentStep || project.step || "review";
   const stepColor = STEP_COLORS[step] || "#22C55E";
   const stepIdx = STEP_KEYS.indexOf(step);
@@ -740,15 +730,15 @@ function ProjectCard({ project, shoots, onClick, onDragStart, onDragEnd, isDragg
       onDragEnd={onDragEnd}
       onClick={onClick}
       style={{
-        background: C.sf, border: `1px solid ${C.bd}`, padding: 14,
+        background: cardBg(stage), border: `1px solid ${C.bd}`, padding: 14,
         cursor: "pointer", transition: "border-color 0.1s, opacity 0.2s",
         opacity: isDragging ? 0.4 : 1,
       }}
-      onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = "#454B66"; }}
+      onMouseEnter={e => { if (!isDragging) e.currentTarget.style.borderColor = C.bdHover; }}
       onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
     >
       {parentShoot && (
-        <div style={{ fontSize: 10, color: "#5E6380", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ fontSize: 10, color: C.txD, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.bd, display: "inline-block" }} />
           {parentShoot.guest} ({shortShootDate(parentShoot.shootDate)} 촬영)
         </div>
@@ -767,7 +757,7 @@ function ProjectCard({ project, shoots, onClick, onDragStart, onDragEnd, isDragg
       </span>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 11, color: "#5E6380" }}>
+        <span style={{ fontSize: 11, color: C.txD }}>
           {project.updatedAt ? shortShootDate(project.updatedAt) : shortShootDate(project.createdAt)}
         </span>
         <div style={{ display: "flex" }}>
@@ -797,6 +787,36 @@ function ProjectCard({ project, shoots, onClick, onDragStart, onDragEnd, isDragg
           }} />
         ))}
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════
+// DONE CARD (표출 완료 컬럼 — shoot/project 통합)
+// ═══════════════════════════════════════════════
+// 이전: KanbanView 안에 인라인 분기로 작성 (코드 중복).
+// 추출 동기: ShootCard / ProjectCard 의 간략 버전으로 형식이 같아 별 컴포넌트로 통일.
+function DoneCard({ item, onSelectProject, onSelectShoot }) {
+  const isShoot = item.type === "shoot";
+  const onClick = () => isShoot ? onSelectShoot(item.data.id) : onSelectProject(item.data.id);
+  const title = isShoot
+    ? item.data.guest
+    : (item.data.fn || item.data.filename || item.data.name || "제목 없음");
+  const subtitle = isShoot
+    ? item.data.topic
+    : formatShootDate(item.data.updatedAt || item.data.createdAt);
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        background: cardBg("done"), border: `1px solid ${C.bd}`, padding: 12, marginBottom: 6,
+        opacity: 0.6, cursor: "pointer",
+      }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = C.bdHover}
+      onMouseLeave={e => e.currentTarget.style.borderColor = C.bd}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, color: C.tx }}>{title}</div>
+      <div style={{ fontSize: 11, color: C.txD, marginTop: 2 }}>{subtitle}</div>
     </div>
   );
 }
