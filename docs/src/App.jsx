@@ -337,10 +337,22 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     subtitle:   tabDataState.subtitle    || {},
   }), [tabDataState]);
 
-  // R3.d.2.e — 옛 tabDataRef 영역 폐기.
-  // 이전 (R3.d.1): SAVE_DISPATCH 의 closure capture stale 영역 차단용 ref.
-  // R3.d.2.b 후 SAVE_DISPATCH 가 tabDataState 직접 read → ref 영역 사용 0.
-  // 누더기 회피 의무 영역 — 호환 layer 정식 폐기.
+  // ───────────────────────────────────────────────────────────────────────────
+  // R3.d.2.e-fix — tabDataStateRef 부활 (stale-closure 차단).
+  // ───────────────────────────────────────────────────────────────────────────
+  // 라이브 진단 (cards=2 onSave → cards=1 PAYLOAD) 결과:
+  //   saveDirtyTabsToKV 가 useCallback([tabDataState, ...]) 라 매 state 변경마다
+  //   새 함수 reference 생성. 그러나 cascading autoSave timer 가 schedule 시점의
+  //   reference 를 holds → 30s 후 fire 시 OLD closure 의 OLD tabDataState 사용
+  //   → 사용자가 그 사이 입력한 데이터 누락 PUT.
+  //
+  // R3.d.2.e 폐기 시 가정 ("SAVE_DISPATCH 가 tabDataState 직접 read → ref 사용 0")
+  // 가 잘못된 가정이었음 — useCallback closure 가 capture stale 함.
+  //
+  // 부활 형식: ref 를 매 render mirror, saveDirtyTabsToKV / pagehide 가 ref 에서 read
+  //          → useCallback deps 에서 tabDataState 제거 가능 → reference 안정 + 항상 최신 read.
+  const tabDataStateRef = useRef(tabDataState);
+  useEffect(() => { tabDataStateRef.current = tabDataState; }, [tabDataState]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // R3.d.2.d — 12 useState 폐기 후 derived const + setter wrapper.
@@ -943,11 +955,11 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       force: !!opts.force,
     });
 
-    // R3.d.2.b — tabDataState (useState) 단일 source 직접 read.
-    // R3.d.1 의 tabDataRef 영역 → R3.d.2.a 의 tabDataState 영역 이행.
-    // useEffect sync 가 patchTab 외 write 도 cover → 누락 위험 0.
+    // R3.d.2.e-fix — tabDataStateRef 에서 read (closure stale 차단).
+    // useCallback closure 가 schedule 시점 tabDataState 를 capture 해 30s 후 fire 시
+    // 옛 데이터 PUT 하던 영역 → ref read 로 항상 최신 보장.
     // 헌장 §5 (11 탭 동등) — 모든 탭 동일 형식 dispatch.
-    const tds = tabDataState || {};
+    const tds = tabDataStateRef.current || {};
     const SAVE_DISPATCH = {
       correction: () => tds.correction,
       review:     () => tds.review,
@@ -1155,9 +1167,10 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       err.failed = failed; err.conflicts = conflicts;
       throw err;
     }
-    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source (내부 직접 read 영역 0).
+    // R3.d.2.e-fix — tabDataState dep 제거. 내부 read 는 tabDataStateRef.current.
+    // 함수 reference 안정 → autoSave timer schedule 시 capture 해도 stale 위험 0.
     // 헌장 §5 (11 탭 동등 dispatch) 정합.
-  }, [tabDataState, cfg, fn, authUser]);
+  }, [cfg, fn, authUser]);
 
   // ── 자동 KV 저장 (큰 작업 완료 시 호출) ──
   // overrideData: setState 직후 아직 렌더링 전일 때 최신 데이터를 직접 전달
@@ -1266,10 +1279,14 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       const id = sessionIdRef.current;
       if (!id || dirtyTabs.current.size === 0 || cfg.apiMode === "mock" || !cfg.workerUrl) return;
       try {
-        // tabDataState 단일 source 11 탭 동등 dispatch (헌장 §5/§6 정식)
+        // R3.d.2.e-fix — pagehide 도 tabDataStateRef 에서 read.
+        // pagehide useEffect 가 [tabDataState] dep 가지지만, dep 갱신 ↔ 핸들러 binding 사이
+        // 작은 race window 가 존재 + 전체적으로 ref pattern 이 더 단순.
+        // 헌장 §5/§6 정식 — 11 탭 동등 dispatch.
+        const tds = tabDataStateRef.current || {};
         const payloads = {};
         for (const t of dirtyTabs.current) {
-          const data = tabDataState[t];
+          const data = tds[t];
           if (data && Object.keys(data).length > 0) payloads[t] = data;
         }
         // M5 — fetch keepalive: true + Authorization header (Worker /save 인증 정합)
@@ -1290,7 +1307,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     };
     window.addEventListener("pagehide", onPageHide);
     return () => window.removeEventListener("pagehide", onPageHide);
-  }, [tabDataState, fn, cfg]);
+    // R3.d.2.e-fix — tabDataState dep 제거. 내부 read 는 tabDataStateRef.current.
+  }, [fn, cfg]);
 
   const handleShare = useCallback(async () => {
     // CMS v2 — A-1: 락(promise) — 자동저장 진행 중이면 skip 대신 대기 후 실행
