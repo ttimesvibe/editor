@@ -25,7 +25,7 @@ import { generateExportHTML } from "./utils/exportHTML.js";
 // ── Components ──
 import { Badge, Progress, MarkedText, TypeBadge, BlockView, ReviewBlock, ScriptEditBlock, CorrectionRightBlock } from "./components/BlockComponents.jsx";
 import { GuideCard } from "./components/GuideCard.jsx";
-import { ShareModal, SessionListModal, SettingsModal } from "./components/Modals.jsx";
+import { ShareModal, SettingsModal } from "./components/Modals.jsx";
 import { EditorialSummaryPanel } from "./components/EditorialSummaryPanel.jsx";
 import { TermReviewScreen } from "./components/TermReviewScreen.jsx";
 import { LoginScreen } from "./components/LoginScreen.jsx";
@@ -278,7 +278,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const [readOnly, setReadOnly] = useState(false);
   // R3.d.2.d — hlMarkers / exportCache 폐기 (derived 영역으로 이전, L320 이후 영역에서)
   const [matchingMode, setMatchingMode] = useState(null); // { key: "blockIdx-subtitle", color: "yellow" } or null
-  const [showSessions, setShowSessions] = useState(false); // 세션 목록 모달
+  // showSessions / SessionListModal 폐기 (2026-05-09): Dashboard 게시판 뷰가 superset → 누더기 정리.
+  // session_index KV 데이터는 화석으로 보존 (자연 만료). 자세한 결정 기록 CHANGELOG 참고.
   const [bookmark, setBookmark] = useState(null); // 책갈피 블록 인덱스
 
   // CMS v2 — D2 모달 + 4중 백업 (묶음 ① ½)
@@ -1933,9 +1934,6 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             📥 내보내기
           </button>
         )}
-        {!readOnly && <button onClick={()=>setShowSessions(true)} title="작업 히스토리"
-          style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.bd}`,
-            background:"transparent",color:C.txM,fontSize:12,cursor:"pointer"}}>📋</button>}
         <button onClick={toggleTheme} title={theme==="dark"?"라이트 모드":"다크 모드"}
           style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.bd}`,
             background:"transparent",color:C.txM,fontSize:12,cursor:"pointer"}}>{theme==="dark"?"☀️":"🌙"}</button>
@@ -2143,28 +2141,6 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
     {showSet && <SettingsModal config={cfg} onSave={saveCfg} onClose={()=>setShowSet(false)}/>}
     {shareUrl && <ShareModal shareUrl={shareUrl} onClose={()=>setShareUrl(null)}/>}
-    {showSessions && <SessionListModal config={cfg} onClose={()=>setShowSessions(false)}
-      onLoad={async(id)=>{
-        setShowSessions(false);
-        setBusy(true); setProg({p:30,l:"세션 불러오는 중..."});
-        try {
-          const data = await apiLoadSession(id, cfg);
-          setBlocks(data.blocks || []);
-          setAnal(data.anal || null);
-          setDiffs(data.diffs || []);
-          setHl(data.hl || []);
-          setHlStats(data.hlStats || null);
-          setHlVerdicts(data.hlVerdicts || {}); setHlEdits(data.hlEdits || {}); setHlMarkers(data.hlMarkers || {}); setScriptEdits(data.scriptEdits || {}); setBlockDeletions(data.blockDeletions || {}); setReviewData(data.reviewData || null);
-          setFn(data.fn || "");
-          setSessionId(id);
-          setGReady((data.hl?.length > 0));
-          setTabWithFreshness(data.hl?.length > 0 ? "guide" : data.reviewData ? "review" : "correction");
-          window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
-          setProg({p:100,l:"✅ 세션 로드 완료"});
-        } catch(e) { setErr(e.message); }
-        finally { setBusy(false); }
-      }}
-    />}
 
 <style>{`
       @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');

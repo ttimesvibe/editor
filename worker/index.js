@@ -214,20 +214,8 @@ if (path === "/debug-location") {
       return await handleDictGet(env, corsHeaders);
     }
 
-    // /sessions — 세션 목록 조회
-    if (path === "/sessions" && request.method === "GET") {
-      return await handleSessionList(env, corsHeaders);
-    }
-
-    // /sessions/delete — 세션 삭제
-    if (path === "/sessions/delete" && request.method === "POST") {
-      try {
-        const body = await request.json();
-        return await handleSessionDelete(body, env, corsHeaders);
-      } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
-      }
-    }
+    // /sessions, /sessions/delete 라우트 폐기 (2026-05-09): Dashboard 게시판 뷰가 superset.
+    // session_index KV 화석 보존 — 미래 갱신/접근 0. handleSessionList/Delete 함수도 동시 제거.
 
     // ── 프로젝트 관리 ──
     if (path === "/projects" && request.method === "GET") {
@@ -375,44 +363,8 @@ if (path === "/debug-location") {
 // /save, /load
 // ═══════════════════════════════════════
 
-// CMS v2 — D6-7: session_index race 완화 (read-after-write verify + array_id_union 재시도)
-// KV eventual consistency 의 race 를 완벽 해결할 순 없으나 race 빈도 크게 감소.
-async function updateSessionIndex(env, entry) {
-  const warnings = [];
-  try {
-    // 1차: GET → upsert → PUT
-    const before = await env.SESSIONS.get("session_index");
-    const beforeIndex = before ? JSON.parse(before) : [];
-    const existIdx = beforeIndex.findIndex(s => s.id === entry.id);
-    if (existIdx >= 0) beforeIndex[existIdx] = { ...beforeIndex[existIdx], ...entry };
-    else beforeIndex.unshift(entry);
-    const serialized = JSON.stringify(beforeIndex);
-    if (serialized.length > 900000) {
-      warnings.push("session_index size approaching 1MB limit");
-      console.warn("[kv-index] session_index size:", serialized.length);
-    }
-    await env.SESSIONS.put("session_index", serialized);
-
-    // 2차: read-after-write — 다른 worker instance 가 추가한 entry 가 잘렸을 수 있음
-    const after = await env.SESSIONS.get("session_index");
-    const afterIndex = after ? JSON.parse(after) : [];
-    // 본 instance 가 알고 있는 entry 중 afterIndex 에 없는 것 (다른 instance 가 덮어쓰면서 잘림)
-    const lost = beforeIndex.filter(b => !afterIndex.find(a => a.id === b.id));
-    if (lost.length > 0) {
-      // array_id_union 재적용
-      const merged = [...afterIndex];
-      for (const l of lost) {
-        if (!merged.find(m => m.id === l.id)) merged.unshift(l);
-      }
-      await env.SESSIONS.put("session_index", JSON.stringify(merged));
-      console.log(`[kv-index] race recovered: ${lost.length} entries restored`);
-    }
-  } catch (e) {
-    console.error("[kv-index] session_index update failed:", e.message);
-    warnings.push("session_index update failed");
-  }
-  return { warnings: warnings.length > 0 ? warnings : null };
-}
+// updateSessionIndex 폐기 (2026-05-09): /sessions 라우트 + SessionListModal 일괄 정리에 따라 dead.
+// session_index KV 화석 보존 — 신규 저장은 더 이상 박지 않음 (project_index 가 단일 진실).
 
 // CMS v2 — 입력 검증 (E4, E5, 묶음 ⑩) + deleted head check (B11, 묶음 ④)
 const VALID_TAB_KEYS = new Set(["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"]);
@@ -522,11 +474,8 @@ async function handleSave(body, env, headers) {
     meta.stages[tab] = { status: body.status || "완료", updatedAt: savedAt };
     await env.SESSIONS.put(`s:${id}:meta`, JSON.stringify(meta), { expirationTtl: 60*60*24*365 });
 
-    // 세션 인덱스 업데이트 (CMS v2 — cap 제거 + D6-7 array_id_union read-after-write)
+    // 세션 인덱스 업데이트 폐기 (2026-05-09): session_index 화석 보존, project_index 단일 진실.
     const warnings = [];
-    const entry = { id, fn: meta.fn || body.fn || "제목 없음", savedAt, tab, schema: "v2" };
-    const idxResult = await updateSessionIndex(env, entry);
-    if (idxResult.warnings) warnings.push(...idxResult.warnings);
 
     // ── modify 탭 저장 시 videoUrl이 있으면 자동으로 post-production으로 이동 ──
     if (tab === "modify" && data && data.videoUrl) {
@@ -573,48 +522,12 @@ async function handleSaveLegacy(body, env, headers) {
   const cleanData = sanitizePayload(dataWithoutId);
   await env.SESSIONS.put("save_" + id, JSON.stringify({ ...cleanData, savedAt }), { expirationTtl: 60*60*24*365 });
 
-  // CMS v2 — D6-7: array_id_union read-after-write
-  const entry = { id, fn: body.fn || "제목 없음", savedAt, blockCount: body.blocks?.length || 0, hasGuide: (body.hl?.length || 0) > 0, schema: "v1-legacy" };
-  const idxResult = await updateSessionIndex(env, entry);
-  const warnings = idxResult.warnings || [];
-
-  // CMS v2 — 응답 표준 {success, id, savedAt, warnings?}
-  const resp = { success: true, id, savedAt };
-  if (warnings.length > 0) resp.warnings = warnings;
-  return new Response(JSON.stringify(resp), { headers });
+  // session_index 갱신 폐기 (2026-05-09): 화석 보존. 응답 표준 유지.
+  return new Response(JSON.stringify({ success: true, id, savedAt }), { headers });
 }
 
-// 세션 목록 조회
-async function handleSessionList(env, headers) {
-  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
-  const indexData = await env.SESSIONS.get("session_index");
-  const index = indexData ? JSON.parse(indexData) : [];
-  return new Response(JSON.stringify({ success: true, sessions: index }), { headers });
-}
-
-// 세션 삭제 (레거시 + 탭별 key 모두 정리)
-async function handleSessionDelete(body, env, headers) {
-  if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
-  const { id } = body;
-  if (!id) return new Response(JSON.stringify({ error: "id required" }), { status: 400, headers });
-  // 레거시 key 삭제
-  await env.SESSIONS.delete(id);
-  await env.SESSIONS.delete("save_" + id);
-  await env.SESSIONS.delete("auto_" + id);
-  // 탭별 key 삭제 (새 스키마)
-  const tabs = ["meta","manuscript","correction","subtitle","review","highlight","guide","setgen","metadata","visual","modify"];
-  await Promise.all(tabs.map(t => env.SESSIONS.delete(`s:${id}:${t}`)));
-  // CMS v2 — 활성 사용자 키도 삭제 (묶음 ⑫)
-  await env.SESSIONS.delete(ACTIVE_KEY(id));
-  // 인덱스에서 제거
-  try {
-    const indexData = await env.SESSIONS.get("session_index");
-    const index = indexData ? JSON.parse(indexData) : [];
-    const filtered = index.filter(s => s.id !== id);
-    await env.SESSIONS.put("session_index", JSON.stringify(filtered));
-  } catch (e) {}
-  return new Response(JSON.stringify({ success: true }), { headers });
-}
+// handleSessionList / handleSessionDelete 폐기 (2026-05-09):
+// /sessions 라우트와 동시 일괄 제거. session_index KV 데이터는 화석 보존.
 
 // 자동 저장 (TTL 7일) — 탭별 또는 레거시
 async function handleAutoSave(body, env, headers) {
@@ -1181,7 +1094,7 @@ async function handleProjectTrashPurge(body, user, env, headers) {
     await env.SESSIONS.delete(p.id); deletedKeys.push(p.id);
     await env.SESSIONS.delete(`save_${p.id}`); deletedKeys.push(`save_${p.id}`);
     await env.SESSIONS.delete(`auto_${p.id}`); deletedKeys.push(`auto_${p.id}`);
-    // CMS v2 — N8: active:{id} 도 명시 정리 (handleSessionDelete 와 일관성)
+    // CMS v2 — N8: active:{id} 도 명시 정리 (좀비 active 사용자 표시 차단)
     await env.SESSIONS.delete(ACTIVE_KEY(p.id)); deletedKeys.push(ACTIVE_KEY(p.id));
     // s:<id>:img:* 동적 키까지 prefix list 로 훑어 삭제
     let cursor = undefined;

@@ -5,6 +5,25 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — SessionListModal 폐기 (Dashboard 게시판 superset)
+
+### 6. cleanup(sessions): /sessions 라우트 + SessionListModal + updateSessionIndex 일괄 제거
+
+- **배경**: CMS 우상단 📋 "작업 히스토리" 버튼 → `SessionListModal` → `/sessions` GET → `session_index` KV 의 단순 목록 표시. v1 시절 진입로.
+- **중복 검토**: Dashboard 게시판 뷰 (`/projects` + `project_index`) 가 superset — 검색/필터/휴지통/권한/편집자 표시 모두 추가 제공. SessionListModal 은 v1→v2 이행 잔재.
+- **Orphan 검증** (정공법 우선): KV 실측으로 session_index vs project_index 좌비 14건 발견.
+  - 12 좀비 (entity 0, 인덱스만 잔존) — 4/24 KV drift 사고 흔적 등
+  - 2 V1 레거시 (`save_<id>`, "(자료) 허진호2 컷편" 4/16 두 번)
+- **사용자 결정**: KV 데이터 화석 보존 + 코드 일괄 제거 (자연 만료 또는 영구). 폐기 X.
+- **변경**:
+  - `App.jsx`: import / `showSessions` state / 📋 버튼 / 모달 렌더 4군 제거
+  - `components/Modals.jsx`: `SessionListModal` 함수 + export 제거 (다른 export 영향 0)
+  - `worker/index.js`: `/sessions` GET + `/sessions/delete` POST 라우트 / `handleSessionList` / `handleSessionDelete` / `updateSessionIndex` 함수 + 두 호출처 (handleSave, handleSaveLegacy) / stale 주석 1건 — 7군 제거
+- **검증**: 94/94 worker 테스트 pass. 빌드 통과 (1026 KB → -4 KB 감소).
+- **결정 기록**: 코드 dead 정리는 _코드만_ 정리하고 KV 데이터는 보존하는 것이 정공법. KV 부담 무시 (~25KB), 미래 forensic 가치 보존, 누더기 0.
+
+---
+
 ## 2026-05-09 — 라이브 데이터 손실 + 휴지통 정합 묶음
 
 이번 묶음의 일관 주제: **누더기 회피 + 정공법으로 데이터 손실 차단**.
