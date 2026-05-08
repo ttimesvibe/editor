@@ -980,9 +980,12 @@ async function handleProjectUpdate(body, user, env, headers) {
 }
 
 // ── 프로젝트 삭제 (soft-delete) ──
-// 탭 키(s:<id>:*, save_, auto_)는 유지한 채 project_index 엔트리에
-// deleted/deletedAt/deletedBy 플래그만 설정. 실제 삭제는 scheduled cron이
-// 30일 경과분에 대해 수행. 복구는 /projects/restore 로.
+// 정책 (B 안 정합 — 2026-05): 영구 보존 + admin 수동 정리 전용.
+//   1. 탭 키(s:<id>:*, save_, auto_) 는 그대로 유지 (TTL 단축 X — 좀비 방지).
+//   2. project_index 엔트리에 deleted/deletedAt/deletedBy 플래그만 설정.
+//   3. 영구 삭제는 admin 이 /projects/trash/purge 로 수동 호출 (handleProjectsTrashPurge).
+//   4. 자동 cron 영구삭제 X — 스토리지 부담 미미 (project_index entry ~530 bytes ×
+//      누적분, 무료 한도 1GB 의 0.0025% 수준 측정 확인) → 자동화 위험 > 가치.
 // 참고: handleProjectList 는 deleted=true 엔트리를 목록에서 자동 제외 (line 502).
 async function handleProjectDelete(body, user, env, headers) {
   if (!env.SESSIONS) return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers });
@@ -1006,20 +1009,10 @@ async function handleProjectDelete(body, user, env, headers) {
   target.deletedAt = now;
   target.deletedBy = deletedBy;
   target.updatedAt = now;
-  // CMS v2 — K-3: 휴지통 30일 TTL (자동 영구 삭제 후보 표시 + entity TTL 단축)
-  const purgeAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  target.purgeEligibleAt = purgeAt;
+  // B 안 (2026-05): purgeEligibleAt + entity TTL 단축 로직 제거.
+  // 정책 = 영구 보존 + admin 수동 정리. 자동 cron 영구삭제 없음 → entity 도 그대로 유지.
+  // (옛 K-3 30일 TTL 단축 영역은 cron 미구현 영역과 모순 → 좀비 발생 → 정공법 정리.)
   await env.SESSIONS.put(PROJECT_INDEX_KEY, JSON.stringify(index));
-
-  // entity 키들의 TTL 을 30일로 단축 (read+put)
-  const TTL_30D = 30 * 24 * 60 * 60;
-  for (const t of PROJECT_TAB_KEYS) {
-    try {
-      const key = `s:${id}:${t}`;
-      const val = await env.SESSIONS.get(key);
-      if (val) await env.SESSIONS.put(key, val, { expirationTtl: TTL_30D });
-    } catch (e) { console.warn(`[trash-ttl] ${id}:${t} TTL 갱신 실패:`, e?.message); }
-  }
 
   // 부모 shoot 의 childProjectIds 에서는 분리 (삭제 대기 상태를 칸반에 노출 X)
   const parentShootId = target.parentShootId || null;
@@ -1062,8 +1055,7 @@ async function handleProjectTrash(user, env, headers) {
       return {
         id: p.id, fn: p.fn, creator: p.creator, creatorEmail: p.creatorEmail,
         editors: p.editors, deletedAt: p.deletedAt, deletedBy: p.deletedBy,
-        daysInTrash,
-        purgeEligibleAt: p.purgeEligibleAt, // CMS v2 — N3 (K-3): 클라가 "30일 후 자동 삭제" 안내
+        daysInTrash,  // 정보 표시용 (자동 삭제 카운트다운 X — 영구 보존)
         parentShootId: p.parentShootId,
       };
     })
@@ -1091,10 +1083,11 @@ async function handleProjectRestore(body, user, env, headers) {
   delete target.deleted;
   delete target.deletedAt;
   delete target.deletedBy;
-  delete target.purgeEligibleAt;
+  delete target.purgeEligibleAt;  // 옛 엔트리 호환 — 새 soft-delete 부터는 박지 않음 (B 안)
   target.updatedAt = new Date().toISOString();
 
-  // CMS v2 — K-3: 복원 시 entity 키 TTL 1년 복원
+  // 옛 엔트리 호환 (B 안 이전 soft-delete): entity 키 TTL 30일 단축돼 있을 수 있음 → 1년 복원.
+  // 새 정책 (영구 보존) 하 신규 soft-delete 는 TTL 단축 X 라 이 루프는 옛 엔트리에만 의미.
   const TTL_1Y = 365 * 24 * 60 * 60;
   for (const t of PROJECT_TAB_KEYS) {
     try {
