@@ -316,7 +316,9 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
     const info = STATUS_MAP[step] || STATUS_MAP.review;
     return (
       <span style={{
-        display: "inline-block", padding: "2px 8px", borderRadius: 4,
+        // justifySelf: "start" — 그리드 cell 의 직접 자식이라 default stretch (inline-block 도 blockified) →
+        // cell 너비만큼 늘어나 80px 컬럼에서 박스 길어 보였던 문제 해소. 자체 폭만 차지하고 좌측 sticky.
+        display: "inline-block", justifySelf: "start", padding: "2px 8px", borderRadius: 4,
         fontSize: 11, fontWeight: 600, lineHeight: "18px",
         color: info.color,
         background: info.color + "1A",
@@ -705,7 +707,7 @@ export function Dashboard({ authUser, cfg, onSelectProject, onNewProject, onEdit
               <BoardRow key={t.id || idx} idx={idx} barColor={TRASH_BAR_COLOR}>
                 <span style={{ fontSize: 12, color: C.txD, fontVariantNumeric: "tabular-nums" }}>{rowNum}</span>
                 <span style={{
-                  display: "inline-block", padding: "2px 8px", borderRadius: 4,
+                  display: "inline-block", justifySelf: "start", padding: "2px 8px", borderRadius: 4,
                   fontSize: 11, fontWeight: 600, lineHeight: "18px",
                   color: TRASH_BAR_COLOR, background: TRASH_BAR_COLOR + "26",
                 }}>삭제됨</span>
