@@ -434,30 +434,10 @@ export function ModifyTab({ sessionId, config, onSave, currentTab, initialData, 
     }
   }, [sessionId, videoUrl, videoId, title, onSave]);
 
-  // ── pagehide/beforeunload 강제 flush (dirty 상태면 keepalive fetch로 마지막 저장) ──
-  useEffect(() => {
-    const handleUnload = () => {
-      const snap = JSON.stringify(cards);
-      if (snap === lastSnapshot.current) return; // 변경사항 없음
-      if (!sessionId || !base) return;
-      const data = { videoUrl, videoId, title, cards, savedAt: new Date().toISOString() };
-      const _tk = localStorage.getItem("ttimes_token");
-      try {
-        fetch(`${base}/save`, {
-          method: "POST",
-          keepalive: true,
-          headers: { "Content-Type": "application/json", ...(_tk ? { "Authorization": `Bearer ${_tk}` } : {}) },
-          body: JSON.stringify({ id: sessionId, tab: "modify", data }),
-        }).catch(() => {});
-      } catch {}
-    };
-    window.addEventListener("pagehide", handleUnload);
-    window.addEventListener("beforeunload", handleUnload);
-    return () => {
-      window.removeEventListener("pagehide", handleUnload);
-      window.removeEventListener("beforeunload", handleUnload);
-    };
-  }, [sessionId, base, cards, videoUrl, videoId, title]);
+  // M5 — ModifyTab 자체 keepalive 영역 폐기 (헌장 §5 / §6 정식 충족).
+  // 이전 결함: App.jsx pagehide useEffect (단일 dispatcher) 영역 우회 → race / 비대칭.
+  // 현재: App.jsx pagehide 영역이 11 탭 동등 fetch keepalive 영역으로 일괄 처리.
+  // = 11 탭 모두 동등 — modify 영역의 자체 path 영역 X (헌장 §6 정합).
 
   function handlePlayerReady(player) {
     playerRef.current = player;

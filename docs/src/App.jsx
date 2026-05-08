@@ -1258,23 +1258,31 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     };
   }, []);
 
-  // CMS v2 — pagehide sendBeacon (묶음 ② A-2, TAB-MOD-01 모범 차용)
+  // M5 — pagehide flush (헌장 §4 4조 운영 약속 영역 흡수, §5 11 탭 동등)
+  // 이전 (R3.d.2.c): sendBeacon — Worker 영역의 인증 영역 강제 → 401 거부 → 11 탭 모두 손실 ★
+  // 현재: fetch keepalive: true + Authorization header — 인증 정합 + 11 탭 모두 영역 보존
   useEffect(() => {
     const onPageHide = () => {
       const id = sessionIdRef.current;
       if (!id || dirtyTabs.current.size === 0 || cfg.apiMode === "mock" || !cfg.workerUrl) return;
       try {
-        // R3.d.2.c — tabDataState 단일 source 11 탭 동등 dispatch (헌장 §5/§6 정식).
-        // 이전: 탭별 분기 (자식 탭 영역 코드 산재) → 단일 loop 정합.
+        // tabDataState 단일 source 11 탭 동등 dispatch (헌장 §5/§6 정식)
         const payloads = {};
         for (const t of dirtyTabs.current) {
           const data = tabDataState[t];
           if (data && Object.keys(data).length > 0) payloads[t] = data;
         }
+        // M5 — fetch keepalive: true + Authorization header (Worker /save 인증 정합)
+        const _tk = localStorage.getItem("ttimes_token");
+        const _ah = _tk ? { "Authorization": `Bearer ${_tk}` } : {};
         for (const [tab, data] of Object.entries(payloads)) {
-          const body = JSON.stringify({ id, tab, data, fn });
-          const blob = new Blob([body], { type: "application/json" });
-          navigator.sendBeacon(`${cfg.workerUrl}/save`, blob);
+          // 각 탭 별 fetch — keepalive 영역의 64KB 한도 영역 분산
+          fetch(`${cfg.workerUrl}/save`, {
+            method: "POST",
+            keepalive: true,
+            headers: { "Content-Type": "application/json", ..._ah },
+            body: JSON.stringify({ id, tab, data, fn }),
+          }).catch(() => {});  // pagehide 영역의 catch 영역
         }
       } catch (e) {
         console.warn("[save-flow] pagehide flush failed:", e?.message || e);
@@ -1282,7 +1290,6 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     };
     window.addEventListener("pagehide", onPageHide);
     return () => window.removeEventListener("pagehide", onPageHide);
-    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source.
   }, [tabDataState, fn, cfg]);
 
   const handleShare = useCallback(async () => {
