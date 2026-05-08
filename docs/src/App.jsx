@@ -2265,11 +2265,33 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         }
       }}
       onSkip={() => {
-        // R3.e-2 — 사용자 명시 "무시" → 해당 backup 삭제 (재출현 차단).
-        // 같은 sessionId 의 다른 backup 잔존 시 다음 진입에 또 popup (잔존 backup 영역).
-        if (restoreModal?.backup?.key) {
-          deleteBackup(restoreModal.backup.key);
-          console.log(`[backup] skip+delete: ${restoreModal.backup.key}`);
+        // R3.e-2-fix — 모달이 사용자에게 보여준 framing 을 그대로 코드에도 반영.
+        //
+        // 두 진입 경로:
+        //   (a) Mount 팝업 (L664-676): sid 의 N개 backup → totalCount = N → 사용자는
+        //       "총 N개의 백업이 있습니다" 안내 보고 "무시하고 새로 시작" 클릭
+        //       → 의도 = 프로젝트 reset (sid 전체 폐기). N개 모두 삭제.
+        //   (b) BackupListModal → 개별 선택 (L2281): totalCount = 1 강제 → 사용자는
+        //       "이 백업" 단일 컨텍스트 보고 "무시" 클릭
+        //       → 의도 = 보여준 1개만 처리 (다른 백업 보존). 1개만 삭제.
+        //
+        // 이전 결함: 항상 1개만 삭제 → (a) 경로에서 잔존 backup 으로 매 진입 재출현 (라이브 보고).
+        // 회귀 0: (a) N=1 / (b) 모든 케이스 → 옛 동작과 동일 (1개만 삭제).
+        const b = restoreModal?.backup;
+        if (b) {
+          if ((restoreModal.totalCount || 1) > 1) {
+            // Mount 팝업 N>1 — sid 의 모든 backup 일괄 삭제 (프로젝트 reset)
+            const allForSid = listBackups().filter(x => x.sessionId === b.sessionId);
+            let removed = 0;
+            for (const x of allForSid) {
+              if (deleteBackup(x.key)) removed++;
+            }
+            console.log(`[backup] skip+delete-all: sid=${b.sessionId}, removed ${removed} backups`);
+          } else {
+            // 단일 컨텍스트 (mount-N=1 또는 BackupListModal 개별 선택) — 1개만 삭제
+            deleteBackup(b.key);
+            console.log(`[backup] skip+delete-one: ${b.key}`);
+          }
         }
         setRestoreModal(null);
       }}

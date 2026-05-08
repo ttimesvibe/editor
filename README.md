@@ -1,64 +1,107 @@
 # ttimes-editor
 
-ttimes-doctor의 테스트/업그레이드 버전.  
-프론트엔드(GitHub Pages)와 백엔드(Cloudflare Worker)를 독립 배포.
+영상 편집/교정 CMS. 프론트엔드 (GitHub Pages) + 백엔드 (Cloudflare Worker) 독립 배포.
 
 ## 구조
 
 ```
-ttimes-editor/
-├── frontend/          ← GitHub Pages 배포
+editor/
+├── docs/                ← GitHub Pages 배포 (main 브랜치 /docs 폴더)
 │   ├── index.html
-│   ├── src/App.jsx    ← React 소스 (참조용, 빌드는 별도)
-│   └── assets/        ← Vite 빌드 결과물
-├── worker/            ← Cloudflare Worker 배포
-│   ├── index.js       ← Worker 메인 코드
-│   └── wrangler.toml  ← Worker 설정
-└── README.md
+│   ├── assets/          ← Vite 빌드 산물
+│   ├── dist/            ← 빌드 출력 (assets 와 sync)
+│   ├── src/
+│   │   ├── App.jsx          ← 11 탭 단일 store + 통합 저장 흐름
+│   │   ├── tabs/            ← 11 탭 컴포넌트 (correction/guide/highlight/visual/modify/...)
+│   │   ├── components/      ← 모달 (RestoreModal, ConflictModal, SaveFailModal, BackupListModal)
+│   │   └── utils/
+│   │       ├── backup.js        ← W2 localStorage 백업
+│   │       ├── tabSchemas.js    ← 헌장 §5 11 탭 schema 단일 진실
+│   │       ├── _mergeImpl.js    ← worker/merge.js 의 클라 미러 (M11)
+│   │       └── config.js        ← workerUrl 박제
+│   └── build.js         ← Vite 빌드 + drift guard (config.js workerUrl 자동 검증)
+├── worker/              ← Cloudflare Worker
+│   ├── index.js         ← 11 탭 dispatch + 통합 저장/조회/충돌
+│   ├── merge.js         ← 머지 전략 (array_stable_id_union, fallbackKeySync 등)
+│   ├── wrangler.toml
+│   └── __tests__/       ← node --test (mergeTabData / permissions / errorMessages / xss / tabs)
+├── CHANGELOG.md         ← 운영 변경 이력 (큐레이션)
+├── CLAUDE.md            ← 운영 컨텍스트 (계정/KV/배포 — 헷갈리는 부분 메모)
+└── README.md            ← 이 파일
 ```
 
-## 배포 방법
+## 배포
 
 ### 프론트엔드 (GitHub Pages)
 
-`frontend/` 내용이 GitHub Pages로 자동 배포됨.  
-레포 Settings → Pages → Source: `main` 브랜치, `/frontend` 폴더 선택.
+`docs/` 폴더가 GitHub Pages 로 자동 배포 (`ttimesvibe/editor` 리포 / main 브랜치 / `/docs` 폴더).
 
-URL: `https://ttimesvibe.github.io/ttimes-editor/`
+```bash
+cd docs && npm run build       # → dist/ 생성 + docs/ 루트로 복사
+git add docs && git commit -m "..."
+git push origin main           # → Pages 자동 배포 (~1-2분)
+```
+
+URL: https://ttimesvibe.github.io/editor/
+
+⚠️ 임시 디렉터리에서 빌드 금지 — 과거 drift 사고 발생 (`docs/BUILD.md` 참고).
 
 ### 백엔드 (Cloudflare Worker)
 
 ```bash
 cd worker
 
-# 1) KV 네임스페이스 생성
-wrangler kv:namespace create SESSIONS
-# → 출력된 id를 wrangler.toml에 입력
+# 1) KV 네임스페이스 (최초 1회)
+npx wrangler kv namespace create SESSIONS
+# → 출력된 id 를 wrangler.toml 의 [[kv_namespaces]] 에 입력
 
-# 2) API 키 설정
-wrangler secret put OPENAI_API_KEY
-wrangler secret put GEMINI_API_KEY
+# 2) Secrets (최초 1회)
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put GEMINI_API_KEY
 
 # 3) 배포
-wrangler deploy
+npx wrangler deploy
 ```
 
-Worker URL: `https://ttimes-editor.<account>.workers.dev`
+현재 운영: `alleditor.ttimes6000.workers.dev` (CLAUDE.md 의 계정 구조 참고).
 
-### 프론트엔드에서 Worker URL 변경
+### Worker URL 변경 시
 
-프론트엔드의 설정(⚙️)에서 Worker URL을 새 Worker 주소로 변경하면 됨.  
-또는 `src/App.jsx`의 `DEFAULT_CONFIG.workerUrl`을 수정 후 재빌드.
+`docs/src/utils/config.js` 와 `docs/build.js` 의 `CANONICAL_WORKER_URL` 두 곳 동시 수정 (drift guard 가 mismatch 자동 차단).
 
-## 환경 변수 (Secrets)
+## 아키텍처 핵심 (요약)
+
+- **단일 진실** — `tabDataState` 단일 store + `patchTab` 단일 setter (헌장 §5/§6)
+- **30s cascading throttle** — 첫 dirty 시점 timer 시작, 입력 중에도 30s 주기 fire (헌장 §1조)
+- **4중 백업** (Walls of Durability)
+  - W1 auto-retry / W2 localStorage / W3 download / W4 beforeunload
+- **약속 X** — 탭 진입 시 fresh fetch (dirty 시 skip)
+- **약속 Y** — `justLoadedRef` 신호로 load 가 dirty 만들지 않음
+- **휴지통** — soft-delete 무기한 보존, admin 이 `/projects/trash/purge` 수동 영구삭제
+
+세부 결정/원인 추적: `CHANGELOG.md` + 인라인 단계 표기 (R3.e-2-fix, B 안 등) + commit 메시지.
+
+## 환경 변수 (Worker Secrets)
 
 | 이름 | 용도 |
-|------|------|
-| OPENAI_API_KEY | GPT API 호출 (교정, 자막 등) |
-| GEMINI_API_KEY | Gemini 호출 (편집가이드) |
+|---|---|
+| OPENAI_API_KEY | GPT API (교정/자막) |
+| GEMINI_API_KEY | Gemini (편집가이드) |
+| ADMIN_EMAILS | admin 이메일 화이트리스트 (휴지통 등 권한 제어) |
 
 ## KV 바인딩
 
 | 바인딩 | 용도 |
-|--------|------|
-| SESSIONS | 세션 저장/불러오기, 팀 공유 단어장 |
+|---|---|
+| SESSIONS | 11 탭 데이터 (`s:<id>:<tab>`), `project_index`, `shoot_index`, 활성 사용자 (`active:<id>`), 단어장 (`shared_dict`), 팀 (`team_*`) |
+
+## 테스트
+
+```bash
+cd worker
+node --test __tests__/mergeTabData.test.js __tests__/errorMessages.test.js \
+            __tests__/permissions.test.js __tests__/tabs.test.js \
+            __tests__/xss_payloads.test.js
+```
+
+현재 94/94 pass.
