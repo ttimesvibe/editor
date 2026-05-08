@@ -455,6 +455,47 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const _patchTabRef = patchTab; // R3.b/c/d 시점 호출부 이행 — 현 단계에선 미사용 (lint 회피)
 
   // ─────────────────────────────────────────────────────────────────────────
+  // M3.c — setTabWithFreshness (약속 X 정식 충족)
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // 헌장 §2 약속 X:
+  //   "탭 진입 시 dirty=아니오 → KV 에서 fresh fetch / dirty=예 → fetch 안 함"
+  //
+  // 영역:
+  //   1. setTab 호출 (사용자 보임 영역의 영역 변경)
+  //   2. isInitialLoad 영역에서는 skip (마운트 영역의 fetch 영역과 중복 X)
+  //   3. dirty=true 영역에서 skip (헌장 영역의 "사용자 변경 영역 보존")
+  //   4. apiLoadTab → patchTab(markDirty=false) (약속 Y 정합)
+  //   5. lastLoadedAt / lastLoadedVersion 갱신 (B5 정합)
+  //
+  // ───────────────────────────────────────────────────────────────────────────
+  const setTabWithFreshness = useCallback((tabId) => {
+    setTab(tabId);  // ← raw useState setter (재귀 영역 X)
+    // 마운트 영역의 일괄 fetch 영역과 중복 X
+    if (isInitialLoad.current) return;
+    if (!isValidTab(tabId)) return;
+    // 약속 X — dirty 영역 fetch X (사용자 영역의 변경 영역 보존)
+    if (dirtyTabs.current.has(tabId)) {
+      console.log(`[r3-diag] tabFresh skip: ${tabId} dirty`);
+      return;
+    }
+    const id = sessionIdRef.current;
+    if (!id || cfg.apiMode === "mock" || !cfg.workerUrl) return;
+    console.log(`[r3-diag] tabFresh fetch: ${tabId}`);
+    apiLoadTab(id, tabId, cfg).then(data => {
+      if (data) {
+        // 약속 Y — markDirty=false (fetch 영역의 dirty 마킹 X)
+        patchTab(tabId, pickFields(tabId, data), { markDirty: false });
+        if (data.savedAt) lastLoadedAt.current[tabId] = data.savedAt;
+        if (data.version !== undefined) lastLoadedVersion.current[tabId] = data.version;
+        console.log(`[r3-diag] tabFresh loaded: ${tabId} keys=[${Object.keys(data).join(",")}]`);
+      }
+    }).catch(e => {
+      console.warn(`[r3-diag] tabFresh failed: ${tabId} — ${e?.message || e}`);
+    });
+  }, [cfg, patchTab]);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // R3.c-prep — 자식 탭 onSave 안정화 (useCallback 으로 감싸 무한 루프 차단)
   // ─────────────────────────────────────────────────────────────────────────
   //
@@ -643,7 +684,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             setHlVerdicts(data.hlVerdicts || {}); setHlEdits(data.hlEdits || {}); setHlMarkers(data.hlMarkers || {}); setScriptEdits(data.scriptEdits || {}); setBlockDeletions(data.blockDeletions || {}); setReviewData(data.reviewData || null);
             setFn(data.fn || "");
             setGReady((data.hl?.length > 0));
-            setTab(data.hl?.length > 0 ? "guide" : data.reviewData ? "review" : "correction");
+            setTabWithFreshness(data.hl?.length > 0 ? "guide" : data.reviewData ? "review" : "correction");
           } else if (data.schema === "v2") {
             // v2 메타만 — 탭 데이터 추가 로드
             setFn(data.fn || "");
@@ -735,9 +776,9 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
                 setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: msText.length, paragraphs, cleanText: msText });
                 setBlocks(reviewBlocks);
               }
-              setTab("review");
+              setTabWithFreshness("review");
             } else {
-              setTab(hasHl ? "guide" : c.blocks?.length > 0 ? "correction" : "correction");
+              setTabWithFreshness(hasHl ? "guide" : c.blocks?.length > 0 ? "correction" : "correction");
             }
           }
           setProg({p:100,l:"✅ 세션 로드 완료"});
@@ -752,7 +793,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           if (s.schemaVersion === "3.0" && s.tabDataState) {
             // R3.d.2.f — 새 형식 (tabDataState 단일 source)
             setTabDataState(s.tabDataState);
-            setFn(s.fn || ""); setTab(s.tab || "correction"); setGReady(s.gReady || false);
+            setFn(s.fn || ""); setTabWithFreshness(s.tab || "correction"); setGReady(s.gReady || false);
             if (s.bookmark != null) setBookmark(s.bookmark);
           } else if (s.blocks?.length > 0) {
             // R3.d.2.f — 옛 형식 fallback (호환 보존, W2 영역 정합).
@@ -760,7 +801,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
             setBlocks(s.blocks); setAnal(s.anal || null);
             setDiffs(s.diffs || []); setHl(s.hl || []);
             setHlStats(s.hlStats || null); setHlVerdicts(s.hlVerdicts || {}); setHlEdits(s.hlEdits || {}); setHlMarkers(s.hlMarkers || {}); setScriptEdits(s.scriptEdits || {}); setBlockDeletions(s.blockDeletions || {}); setReviewData(s.reviewData || null);
-            setFn(s.fn || ""); setTab(s.tab || "correction"); setGReady(s.gReady || false);
+            setFn(s.fn || ""); setTabWithFreshness(s.tab || "correction"); setGReady(s.gReady || false);
             if (s.bookmark != null) setBookmark(s.bookmark);
             if (s.exportCache) setExportCache(s.exportCache);
           }
@@ -1281,7 +1322,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null; }
     setAutoSaveStatus(""); setLastSavedSnapshot("");
     setBlocks([]); setAnal(null); setDiffs([]); setHl([]); setHlStats(null); setHlVerdicts({}); setHlEdits({}); setHlMarkers({}); setScriptEdits({}); setBlockDeletions({}); setReviewData(null);
-    setFn(""); setTab("correction"); setGReady(false); setBookmark(null); setExportCache({});
+    setFn(""); setTabWithFreshness("correction"); setGReady(false); setBookmark(null); setExportCache({});
     setTermReview(false); setReadOnly(false); setSessionId(null); sessionIdRef.current = null;
     window.history.replaceState({}, "", window.location.pathname);
   }, []);
@@ -1306,7 +1347,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       } catch (e) { console.warn("[backup] manuscript_replace 백업 실패:", e?.message); }
     }
     setFn(name); setBusy(true); setErr(null); setDiffs([]); setHl([]); setHlStats(null); setGReady(false);
-    setTermReview(false); setTab("correction");
+    setTermReview(false); setTabWithFreshness("correction");
     try {
       setProg({p:5,l:"텍스트 파싱 중..."});
       const parsed = parseBlocks(text); setBlocks(parsed);
@@ -1478,7 +1519,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
   // Generate guide — 2-Pass: Draft → Editor (청크 분할 지원)
   const handleGuide = useCallback(async()=>{
-    setGBusy(true); setErr(null); setTab("guide");
+    setGBusy(true); setErr(null); setTabWithFreshness("guide");
     try {
       // ── 청크 분할: 40,000자 기준, 오버랩 5블록 ──
       const HIGHLIGHT_CHUNK_SIZE = 40000;
@@ -1749,7 +1790,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           setReviewData({ hasTrackChanges: true, deletedBlockIndices: [...deletedBlockIndices], blockStrikeRanges, duration, reviewBlocks, cleanTextChars, paragraphs: tcResult.paragraphs, cleanText });
           // blocks는 cleanText 기준 — 0차 review는 reviewData.paragraphs로 독립 렌더
           setBlocks(parseBlocks(cleanText));
-          setTab("review");
+          setTabWithFreshness("review");
           setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
           return;
         }
@@ -1765,7 +1806,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       setFn(file.name);
       setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: plainText.length, paragraphs, cleanText: plainText });
       setBlocks(reviewBlocks);
-      setTab("review");
+      setTabWithFreshness("review");
       setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
     } else {
       const text = await file.text();
@@ -1775,7 +1816,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       setFn(file.name);
       setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: text.length, paragraphs, cleanText: text });
       setBlocks(reviewBlocks);
-      setTab("review");
+      setTabWithFreshness("review");
       setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
     }
   },[handleFile]);
@@ -1814,7 +1855,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         </span>}
         {(hasData||tab==="modify")&&!termReview && <div style={{display:"flex",gap:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
           {[["review","0차 검토"],["correction","1차 교정"],["script","스크립트"],["guide","편집 가이드"],["visual","자료·그래픽"],["modify","수정사항"],["highlight","하이라이트"],["setgen","세트"]].map(([id,l])=>
-            <button key={id} onClick={()=>setTab(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
+            <button key={id} onClick={()=>setTabWithFreshness(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
               fontSize:11,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
               color:tab===id?"#fff":C.txM,transition:"all 0.12s",whiteSpace:"nowrap",
               opacity:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?0.4:1,
@@ -1885,7 +1926,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           이후 편집 가이드에서 강조자막 생성 (v2 룰북 2-Pass)
         </p>
         <div style={{textAlign:"center",marginTop:24,paddingTop:16,borderTop:`1px solid ${C.bd}`}}>
-          <button onClick={()=>setTab("modify")} style={{background:"transparent",border:`1px solid ${C.bd}`,borderRadius:8,
+          <button onClick={()=>setTabWithFreshness("modify")} style={{background:"transparent",border:`1px solid ${C.bd}`,borderRadius:8,
             padding:"10px 24px",cursor:"pointer",color:C.ac,fontSize:13,fontFamily:FN,fontWeight:500,transition:"all 0.15s"}}
             onMouseEnter={e=>e.currentTarget.style.borderColor=C.ac} onMouseLeave={e=>e.currentTarget.style.borderColor=C.bd}>
             🎬 원고 없이 영상 수정사항 작성하기</button>
@@ -1905,7 +1946,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           onAction={{
             onProceedToCorrection: () => {
               const ct = reviewData.cleanText || "";
-              setTab("correction");
+              setTabWithFreshness("correction");
               handleFile(ct, fn);
             },
           }}
@@ -2058,7 +2099,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           setFn(data.fn || "");
           setSessionId(id);
           setGReady((data.hl?.length > 0));
-          setTab(data.hl?.length > 0 ? "guide" : data.reviewData ? "review" : "correction");
+          setTabWithFreshness(data.hl?.length > 0 ? "guide" : data.reviewData ? "review" : "correction");
           window.history.replaceState({}, "", `${window.location.pathname}?s=${id}`);
           setProg({p:100,l:"✅ 세션 로드 완료"});
         } catch(e) { setErr(e.message); }
