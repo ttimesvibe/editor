@@ -15,7 +15,7 @@ const STEP_LABELS = {
 
 const STEP_COLORS = {
   review:"#22C55E", correction:"#22C55E", script:"#22C55E",
-  guide:"#3B82F6", visual:"#3B82F6", modify:"#F59E0B",
+  guide:"#3B82F6", visual:"#A855F7", modify:"#F59E0B",  // visual 분리 (2026-05-09)
   highlight:"#22C55E", setgen:"#22C55E", done:"#5E6380",
 };
 

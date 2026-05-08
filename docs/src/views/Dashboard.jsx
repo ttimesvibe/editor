@@ -18,7 +18,7 @@ const STATUS_MAP = {
   correction: { label: "진행중",     color: "#22C55E" },
   script:     { label: "진행중",     color: "#22C55E" },
   guide:      { label: "편집가이드", color: "#3B82F6" },
-  visual:     { label: "편집가이드", color: "#3B82F6" },
+  visual:     { label: "자료·그래픽", color: "#A855F7" },  // 2026-05-09 — guide 와 라벨/색 분리 (mismatch 버그 fix)
   modify:     { label: "수정사항",   color: "#F59E0B" },
   highlight:  { label: "하이라이트", color: "#22C55E" },
   setgen:     { label: "세트",       color: "#22C55E" },

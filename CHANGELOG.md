@@ -5,6 +5,29 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — visual 단계 mismatch 버그 + 편집 탭 ✓ 일관성
+
+### 10. fix(steps): STATUS_MAP visual 분리 + 편집 탭 ✓ 단계별 일관성
+
+- **버그**: 게시판에서 visual ("자료·그래픽") 단계 프로젝트가 상태 배지 / 좌측 색 막대 / 진행바 색이 모두 guide ("편집가이드") 로 표시. 사용자 보고: "자료-그래픽 단계 프로젝트도 상태 바에 편집가이드로 나옴"
+- **원인** (Dashboard.jsx L20-21):
+  ```js
+  guide:  { label: "편집가이드", color: "#3B82F6" },
+  visual: { label: "편집가이드", color: "#3B82F6" },  // ★ guide 와 동일
+  ```
+  STEP_LABELS 만 "자료·그래픽" 으로 분리되어 "현재 단계" 컬럼만 정상 표시 → mismatch.
+- **부가** (편집 탭 ✓): App.jsx L1922 `id==="guide"&&gReady?" ✓":""` — guide 탭에만 ✓ 표시. 다른 단계 (review/correction/visual/modify/...) 는 ✓ 표시 로직 없어 사용자 직관 어긋남.
+- **사용자 결정**: 라벨/색 분리 (visual = "자료·그래픽" + 보라 #A855F7) + 편집 탭 ✓ 단계별 데이터 기반 일관성. 스파게티 통합 (단계 정의 4-5곳 산재) 은 별 commit 으로 분리.
+- **변경**:
+  - `Dashboard.jsx` STATUS_MAP: `visual: { label: "자료·그래픽", color: "#A855F7" }`
+  - `KanbanView.jsx` STEP_COLORS: `visual: "#A855F7"`
+  - `App.jsx` 편집 탭: 인라인 IIFE 로 `stepDone[id]` 매핑 (review reviewData / correction diffs / script scriptEdits|blockDeletions / guide gReady / visual visualGuides|insertCuts|manualResources / modify cards / highlight clips / setgen result) → 각 탭에 ✓
+- **회귀**: 빌드 통과. 기존 동작 영향:
+  - 게시판 visual row 색이 보라로 바뀜 (의도된 변화)
+  - 편집 탭에서 guide 외 단계도 데이터 있으면 ✓ 표시 (의도된 추가 정보)
+
+---
+
 ## 2026-05-09 — 게시판 zebra + 좌측 status 막대 + 라이트모드 활성탭 버그 정리
 
 ### 9. style(board): 라이트모드 활성탭 가시성 + zebra + 좌측 status 색 막대 + 코드 정리

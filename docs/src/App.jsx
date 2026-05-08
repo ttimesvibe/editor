@@ -1914,12 +1914,28 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           읽기 전용
         </span>}
         {(hasData||tab==="modify")&&!termReview && <div style={{display:"flex",gap:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2}}>
-          {[["review","0차 검토"],["correction","1차 교정"],["script","스크립트"],["guide","편집 가이드"],["visual","자료·그래픽"],["modify","수정사항"],["highlight","하이라이트"],["setgen","세트"]].map(([id,l])=>
-            <button key={id} onClick={()=>setTabWithFreshness(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
-              fontSize:11,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
-              color:tab===id?"#fff":C.txM,transition:"all 0.12s",whiteSpace:"nowrap",
-              opacity:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?0.4:1,
-              pointerEvents:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?"none":"auto"}}>{l}{id==="guide"&&gReady?" ✓":""}</button>)}
+          {(() => {
+            // 단계별 ✓ 일관성 (2026-05-09): guide 만 ✓ 였던 옛 로직 → 모든 단계 데이터 보유 시 ✓.
+            // 사용자 직관: "현재 작업 중인 단계와 완료된 단계가 시각적으로 구분되어야".
+            const stepDone = {
+              review:    !!reviewData,
+              correction: (diffs?.length || 0) > 0,
+              script:    Object.keys(scriptEdits || {}).length > 0 || Object.keys(blockDeletions || {}).length > 0,
+              guide:     gReady,
+              visual:    (tabData.visual?.visualGuides?.length || 0) > 0
+                      || (tabData.visual?.insertCuts?.length || 0) > 0
+                      || (tabData.visual?.manualResources?.length || 0) > 0,
+              modify:    (tabData.modify?.cards?.length || 0) > 0,
+              highlight: (tabData.highlight?.clips?.length || 0) > 0,
+              setgen:    !!tabData.setgen?.result,
+            };
+            return [["review","0차 검토"],["correction","1차 교정"],["script","스크립트"],["guide","편집 가이드"],["visual","자료·그래픽"],["modify","수정사항"],["highlight","하이라이트"],["setgen","세트"]].map(([id,l])=>
+              <button key={id} onClick={()=>setTabWithFreshness(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
+                fontSize:11,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
+                color:tab===id?"#fff":C.txM,transition:"all 0.12s",whiteSpace:"nowrap",
+                opacity:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?0.4:1,
+                pointerEvents:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?"none":"auto"}}>{l}{stepDone[id]?" ✓":""}</button>);
+          })()}
         </div>}
         {hasData && !readOnly && !termReview && (
           <button onClick={handleShare} disabled={saving} style={{padding:"5px 14px",borderRadius:6,border:"none",
