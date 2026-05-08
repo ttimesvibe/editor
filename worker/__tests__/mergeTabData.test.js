@@ -156,6 +156,84 @@ describe("mergeTabData — visual / setgen / review", () => {
   });
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// id-fallback 데이터 손실 방지 회귀 (Value 1)
+// ───────────────────────────────────────────────────────────────────────────
+// 배경: modify.cards / highlight.clips 항목은 사용자가 직접 만들어 _stableId 가 없고,
+//       MERGE_STRATEGIES 의 entityType ("manualResources" / "hl") 가 가리키는 fallbackKeySync
+//       의 키 필드 (blockIndex|type|query|url, subtitle|speaker|startMs) 와 실제 데이터 shape
+//       (id, content/text, …) 가 mismatch 라 모든 항목이 같은 키 (e.g. "|||") 로 떨어졌고,
+//       arrayIdUnion 의 Map.set 이 마지막 항목으로 덮어써 1 개만 남는 손실 발생.
+// 수정: fallbackKeySync 첫 줄에 `if (item.id) return "id:" + item.id` 추가.
+//       _stableId 보유 항목 (correction.diffs / guide.hl AI 생성) 은 영향 없음 — 그쪽은
+//       arrayIdUnion idFn 에서 _stableId 가 먼저 잡혀 fallbackKeySync 까지 오지 않음.
+describe("mergeTabData — id-fallback dedupe (data loss regression)", () => {
+  test("modify.cards: id 만 보유한 사용자 항목 — 모두 보존", () => {
+    const ex = { cards: [{ id: "card-A", content: "수정 1", time: "0:01" }] };
+    const inc = {
+      cards: [
+        { id: "card-A", content: "수정 1", time: "0:01" },
+        { id: "card-B", content: "수정 2", time: "0:10" },
+      ],
+    };
+    const m = mergeTabData(ex, inc, "modify");
+    assert.equal(m.cards.length, 2);
+    assert.deepEqual(m.cards.map(c => c.id).sort(), ["card-A", "card-B"]);
+  });
+
+  test("highlight.clips: id 만 보유한 사용자 항목 — 모두 보존", () => {
+    const ex = { clips: [{ id: "clip-1", text: "강조 1", blockId: 0, seconds: 5 }] };
+    const inc = {
+      clips: [
+        { id: "clip-1", text: "강조 1", blockId: 0, seconds: 5 },
+        { id: "clip-2", text: "강조 2", blockId: 1, seconds: 7 },
+      ],
+    };
+    const m = mergeTabData(ex, inc, "highlight");
+    assert.equal(m.clips.length, 2);
+    assert.deepEqual(m.clips.map(c => c.id).sort(), ["clip-1", "clip-2"]);
+  });
+
+  test("visualGuides: id 보유한 빈 항목 (query/url 모두 빈) 도 충돌 없이 보존", () => {
+    // 사용자가 빈 슬롯을 추가한 경우 — 옛 fallback 키 (blockIndex|type|query|url) 로는 충돌
+    const ex = { visualGuides: [{ id: "v-1", blockIndex: 0, type: "image", query: "", url: "" }] };
+    const inc = {
+      visualGuides: [
+        { id: "v-1", blockIndex: 0, type: "image", query: "", url: "" },
+        { id: "v-2", blockIndex: 0, type: "image", query: "", url: "" },
+      ],
+    };
+    const m = mergeTabData(ex, inc, "visual");
+    assert.equal(m.visualGuides.length, 2);
+  });
+
+  test("같은 id 면 last-write-wins (정상 dedupe 의도)", () => {
+    const ex = { cards: [{ id: "card-A", content: "old" }] };
+    const inc = { cards: [{ id: "card-A", content: "new" }] };
+    const m = mergeTabData(ex, inc, "modify");
+    assert.equal(m.cards.length, 1);
+    assert.equal(m.cards[0].content, "new");
+  });
+
+  test("id 가 빈 문자열이면 type-specific fallback 으로 추락", () => {
+    // id="" 는 사실상 부재로 취급 — 빈 문자열 N 개가 모두 "id:" 로 충돌하면 안 됨
+    const ex = { hl: [{ id: "", subtitle: "x", speaker: "A", startMs: 100 }] };
+    const inc = { hl: [{ id: "", subtitle: "x", speaker: "A", startMs: 200 }] };
+    const m = mergeTabData(ex, inc, "guide");
+    // startMs 가 다르므로 별개 항목 — 옛 동작과 동일
+    assert.equal(m.hl.length, 2);
+  });
+
+  test("_stableId 우선 — id 가 있어도 _stableId 로 매칭", () => {
+    // AI 생성 항목과 사용자 편집의 호환 — _stableId 가 항상 우선
+    const ex = { hl: [{ _stableId: "S1", id: "u-1", text: "old" }] };
+    const inc = { hl: [{ _stableId: "S1", id: "u-2", text: "new" }] };
+    const m = mergeTabData(ex, inc, "guide");
+    assert.equal(m.hl.length, 1);
+    assert.equal(m.hl[0].text, "new");
+  });
+});
+
 describe("mergeTabData — manuscript (__replace)", () => {
   test("manuscript: 통째 교체 (재업로드 시)", () => {
     const ex = { paragraphs: ["old1", "old2"] };

@@ -15,7 +15,15 @@ async function sha256_12(str) {
 }
 
 // fallback ID 동기 버전 (단순 hash, 충돌 가능성 더 높지만 빠름)
+//
+// ★ 데이터 손실 방지 (Value 1) — 항목에 클라이언트가 박은 안정 식별자 `id` 가 있으면 그것을 최우선 사용.
+//   modify.cards / highlight.clips 같이 사용자가 직접 만든 항목은 `_stableId` 가 없고
+//   기존 entityType 기반 fallback (blockIndex|type|query|url, subtitle|speaker|startMs) 와
+//   실제 필드 shape 가 mismatch → 모든 항목이 같은 키로 떨어져 arrayIdUnion 의 Map 이
+//   마지막 항목으로 덮어씌워 → 1 개만 남는 손실 발생. (worker/__tests__/mergeTabData.test.js id-fallback 회귀 참고)
 function fallbackKeySync(item, type) {
+  // 0. 클라이언트 안정 id 우선 (cards/clips/manualResources 등 사용자 생성 항목)
+  if (item && item.id != null && item.id !== "") return `id:${item.id}`;
   if (type === "hl") {
     return `${item.subtitle ?? ""}|${item.speaker ?? ""}|${item.startMs ?? ""}`;
   }
