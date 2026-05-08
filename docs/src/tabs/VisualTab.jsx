@@ -469,9 +469,12 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
 
   // initialData에서 복원 (페이지 새로고침 후, KV 로드 전)
   const restoredRef = useRef(false);
+  // M3.a — 약속 Y 영역의 명시 신호: initialData / 자체 fetch 영역의 setX → onSave skip.
+  const justLoadedRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || loaded || !initialData) return;
     if (initialData.visualGuides?.length > 0 || initialData.insertCuts?.length > 0 || initialData.manualResources?.length > 0) {
+      justLoadedRef.current = true;  // ← M3.a: 약속 Y 신호
       setVisualGuides(initialData.visualGuides || []);
       setInsertCuts(initialData.insertCuts || []);
       setVerdicts(initialData.verdicts || {});
@@ -509,13 +512,14 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
         const data = await r.json();
         const d = data?.data || data; // data.data (레거시) 또는 data 직접
         if (d && (d.visualGuides || d.insertCuts || d.manualResources)) {
+          // M3.a — 약속 Y: 자체 fetch 영역 → justLoadedRef 신호. 직접 onSave 호출 영역 폐기.
+          //         (state useEffect 가 처리 — justLoaded 신호로 skip → dirty 마킹 영역 X)
+          justLoadedRef.current = true;
           setVisualGuides(d.visualGuides || []);
           setInsertCuts(d.insertCuts || []);
           setVerdicts(d.verdicts || {});
           setManualResources(d.manualResources || []);
           setVisualMarkers(d.visualMarkers || {});
-          // 즉시 exportCache에 반영
-          onSave?.({ visualGuides: d.visualGuides || [], insertCuts: d.insertCuts || [], verdicts: d.verdicts || {}, manualResources: d.manualResources || [], visualMarkers: d.visualMarkers || {}, savedAt: new Date().toISOString() });
         }
         setLoaded(true);
       } catch { setLoaded(true); }
@@ -527,6 +531,11 @@ export function VisualTab({ script, blocks, sessionId, config, onSave, currentTa
   // 이전 결함: 자식 3분 디바운스 → 사용자 [💾 저장] 클릭 시 부모 exportCache.visual 미박힘 → visual 저장 누락.
   useEffect(() => {
     if (visualGuides.length === 0 && insertCuts.length === 0 && manualResources.length === 0) return;
+    // M3.a — 약속 Y: initialData / 자체 fetch 영역의 onSave 호출 영역 skip
+    if (justLoadedRef.current) {
+      justLoadedRef.current = false;  // 신호 소비
+      return;
+    }
     onSave?.({ visualGuides, insertCuts, verdicts, manualResources, visualMarkers, savedAt: new Date().toISOString() });
   }, [visualGuides, insertCuts, verdicts, manualResources, visualMarkers, onSave]);
 

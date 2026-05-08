@@ -47,12 +47,21 @@ export function HighlightTab({ script, blocks, sessionId, config, onSave, curren
 
   // 초기 데이터 로드 (App.jsx에서 전달)
   const initializedRef = useRef(false);
+  // M3.a — 약속 Y 영역의 명시 신호: initialData 로 인한 setX 영역 → onSave 영역 skip.
+  const justLoadedRef = useRef(false);
 
   // initialData에서 복원 (페이지 새로고침 후)
   useEffect(() => {
     if (initializedRef.current || !initialData) return;
-    if (initialData.clips?.length > 0) { setClips(initialData.clips); initializedRef.current = true; }
-    if (initialData.recs?.length > 0) setRecs(initialData.recs);
+    if (initialData.clips?.length > 0) {
+      justLoadedRef.current = true;  // ← M3.a: 약속 Y 신호
+      setClips(initialData.clips);
+      initializedRef.current = true;
+    }
+    if (initialData.recs?.length > 0) {
+      justLoadedRef.current = true;
+      setRecs(initialData.recs);
+    }
   }, [initialData]);
 
   // 탭 비활성화 시 즉시 저장
@@ -69,6 +78,11 @@ export function HighlightTab({ script, blocks, sessionId, config, onSave, curren
   // 클립 변경 시 즉시 exportCache 동기화 (업데이트 버튼에서 최신 데이터 사용)
   useEffect(() => {
     if (!onSave || clips.length === 0) return;
+    // M3.a — 약속 Y: initialData 로드 영역의 onSave 호출 영역 skip
+    if (justLoadedRef.current) {
+      justLoadedRef.current = false;  // 신호 소비
+      return;
+    }
     onSave({ clips, recs, savedAt: new Date().toISOString() });
   }, [clips, recs]);
 

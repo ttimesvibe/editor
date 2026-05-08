@@ -71,9 +71,15 @@ export function SetgenTab({ script, blocks, guestName, guestTitle, sessionId, co
 
   // initialData에서 복원 (페이지 새로고침 후)
   const restoredRef = useRef(false);
+  // M3.a — 약속 Y 영역의 명시 신호: initialData → setX → onSave 영역 skip
+  const justLoadedRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || !initialData) return;
-    if (initialData.result) { setResult(initialData.result); restoredRef.current = true; }
+    if (initialData.result) {
+      justLoadedRef.current = true;  // ← M3.a: 약속 Y 신호
+      setResult(initialData.result);
+      restoredRef.current = true;
+    }
     if (initialData.trendData) setTrendData(initialData.trendData);
     if (initialData.trendingNow) setTrendingNow(initialData.trendingNow);
     if (initialData.keywords) setKeywords(initialData.keywords);
@@ -97,6 +103,11 @@ export function SetgenTab({ script, blocks, guestName, guestTitle, sessionId, co
   // CMS v2 — 자식 → 부모 즉시 onSave (디바운스 X). 부모가 KV PUT 디바운스 처리.
   useEffect(() => {
     if (!onSave || !result) return;
+    // M3.a — 약속 Y: initialData 영역의 onSave 호출 영역 skip
+    if (justLoadedRef.current) {
+      justLoadedRef.current = false;  // 신호 소비
+      return;
+    }
     onSave({ result, trendData, trendingNow, keywords, selections: sel, edits, focusKeyword: focusKw, timestamps, savedAt: new Date().toISOString() });
   }, [result, sel, edits, timestamps]);
 
