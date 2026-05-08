@@ -15,6 +15,8 @@ import { findPositions, getCorrectedText } from "./utils/diffRenderer.js";
 import { _savedTheme, C, FN, applyTheme, MARKER_COLORS, MARKER_COLORS_LIGHT, MARKER_COLORS_DARK, setMarkerColors } from "./utils/styles.js";
 // R1 — 헌장 v1.1 §5/§6 정식 충족: 11 탭 데이터 schema 단일 진실.
 import { TAB_IDS, TAB_SCHEMAS, pickFields, isValidTab } from "./utils/tabSchemas.js";
+// 단계 정의 단일 소스 (2026-05-09 통합)
+import { STEP_KEYS, STEP_LABELS, STEP_MAP } from "./utils/tabs.js";
 // R2.a/R2.b/R2.c — 부모 탭 컴포넌트 추출 (TabComponentInterface 따름).
 import ReviewTab from "./tabs/ReviewTab.jsx";
 import CorrectionTab from "./tabs/CorrectionTab.jsx";
@@ -927,7 +929,7 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
   const saveCfg = useCallback(c=>{setCfg(c);saveConfig(c);setShowSet(false)},[]);
 
   // ── stepProgress 자동 업데이트 ──
-  const STEP_MAP = { review: 0, correction: 1, script: 2, guide: 3, visual: 4, modify: 5, highlight: 6, setgen: 7 };
+  // STEP_MAP 은 utils/tabs.js 단일 소스에서 import (2026-05-09 통합).
   const updateStepProgress = useCallback((tabName) => {
     const sid = sessionIdRef.current;
     if (!sid || cfg.apiMode === "mock") return;
@@ -1929,12 +1931,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
               highlight: (tabData.highlight?.clips?.length || 0) > 0,
               setgen:    !!tabData.setgen?.result,
             };
-            return [["review","0차 검토"],["correction","1차 교정"],["script","스크립트"],["guide","편집 가이드"],["visual","자료·그래픽"],["modify","수정사항"],["highlight","하이라이트"],["setgen","세트"]].map(([id,l])=>
+            // STEP_KEYS / STEP_LABELS 는 tabs.js 단일 소스 — 인라인 배열 폐기 (2026-05-09 통합)
+            return STEP_KEYS.map(id =>
               <button key={id} onClick={()=>setTabWithFreshness(id)} style={{padding:"5px 10px",borderRadius:5,border:"none",cursor:"pointer",
                 fontSize:11,fontWeight:tab===id?600:400,background:tab===id?C.ac:"transparent",
                 color:tab===id?"#fff":C.txM,transition:"all 0.12s",whiteSpace:"nowrap",
                 opacity:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?0.4:1,
-                pointerEvents:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?"none":"auto"}}>{l}{stepDone[id]?" ✓":""}</button>);
+                pointerEvents:(id==="review"&&!reviewData)||(id!=="modify"&&!hasData)?"none":"auto"}}>{STEP_LABELS[id]}{stepDone[id]?" ✓":""}</button>);
           })()}
         </div>}
         {hasData && !readOnly && !termReview && (

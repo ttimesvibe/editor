@@ -1,23 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { C, FN } from "../utils/styles.js";
+import { STEP_KEYS, STEP_LABELS, STEP_COLORS } from "../utils/tabs.js";
 
 // ── Constants ──
+// (STEP_KEYS / STEP_LABELS / STEP_COLORS 는 utils/tabs.js 단일 소스에서 import — 2026-05-09 통합)
 
 const AVATAR_COLORS = ["#4A6CF7","#7C3AED","#EC4899","#F59E0B","#10B981","#EF4444","#06B6D4","#8B5CF6"];
-
-const STEP_KEYS = ["review","correction","script","guide","visual","modify","highlight","setgen"];
-
-const STEP_LABELS = {
-  review:"0차 검토", correction:"1차 교정", script:"스크립트",
-  guide:"편집 가이드", visual:"자료·그래픽", modify:"수정사항",
-  highlight:"하이라이트", setgen:"세트", done:"완료",
-};
-
-const STEP_COLORS = {
-  review:"#22C55E", correction:"#22C55E", script:"#22C55E",
-  guide:"#3B82F6", visual:"#A855F7", modify:"#F59E0B",  // visual 분리 (2026-05-09)
-  highlight:"#22C55E", setgen:"#22C55E", done:"#5E6380",
-};
 
 const COLUMNS = [
   { key: "pre-production", label: "촬영 예정", color: "#A78BFA" },

@@ -2,28 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { C, FN } from "../utils/styles.js";
 import { KanbanView } from "./KanbanView.jsx";
 import { deleteBackupsForSession } from "../utils/backup.js";
+import { STEP_KEYS, STEP_LABELS, STATUS_MAP } from "../utils/tabs.js";
 
 // ── Constants ──
-
-const STEP_LABELS = {
-  review: "0차 검토", correction: "1차 교정", script: "스크립트",
-  guide: "편집 가이드", visual: "자료·그래픽", modify: "수정사항",
-  highlight: "하이라이트", setgen: "세트", done: "완료",
-};
-
-const STEP_KEYS = ["review", "correction", "script", "guide", "visual", "modify", "highlight", "setgen"];
-
-const STATUS_MAP = {
-  review:     { label: "진행중",     color: "#22C55E" },
-  correction: { label: "진행중",     color: "#22C55E" },
-  script:     { label: "진행중",     color: "#22C55E" },
-  guide:      { label: "편집가이드", color: "#3B82F6" },
-  visual:     { label: "자료·그래픽", color: "#A855F7" },  // 2026-05-09 — guide 와 라벨/색 분리 (mismatch 버그 fix)
-  modify:     { label: "수정사항",   color: "#F59E0B" },
-  highlight:  { label: "하이라이트", color: "#22C55E" },
-  setgen:     { label: "세트",       color: "#22C55E" },
-  done:       { label: "완료",       color: "#5E6380" },
-};
+// (STEP_KEYS / STEP_LABELS / STATUS_MAP 는 utils/tabs.js 단일 소스에서 import — 2026-05-09 통합)
 
 const AVATAR_COLORS = ["#4A6CF7","#7C3AED","#EC4899","#F59E0B","#10B981","#EF4444","#06B6D4","#8B5CF6"];
 

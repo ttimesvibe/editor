@@ -5,6 +5,30 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — 단계 정의 단일 소스 통합 (4-5곳 산재 → tabs.js 한 곳)
+
+### 11. refactor(steps): STEP_KEYS/LABELS/COLORS/MAP/STATUS_MAP 단일 소스 통합
+
+- **배경**: 단계 정의가 5곳 산재 → 라벨/색 변경 시 다 잊지 말고 손봐야 했음. visual mismatch 버그 (#10) 가 정확히 그 결과 (Dashboard STATUS_MAP 만 visual=guide 로 박혀 있어서 다른 곳과 어긋남).
+- **인벤토리** (통합 전):
+  - `Dashboard.jsx` STATUS_MAP / STEP_LABELS / STEP_KEYS
+  - `KanbanView.jsx` STEP_KEYS / STEP_LABELS / STEP_COLORS
+  - `App.jsx` STEP_MAP (인덱스) + 편집 탭 인라인 배열 `[["review","0차 검토"], ...]`
+  - `utils/tabs.js` TAB_MAP + STEP_MAP (이미 단일 소스 의도였으나 활용 미완)
+- **사용자 결정**: 단일 소스 = `tabs.js` 의 TAB_MAP 확장 (새 파일 안 만듦). 라벨 통일 — "편집 가이드" / "편집가이드" 띄어쓰기 차이를 모두 "편집가이드" (붙임) 로 통일.
+- **변경**:
+  - `utils/tabs.js`: TAB_MAP 에 `label` / `statusLabel` / `color` 필드 추가. derived export 4개 (`STEP_KEYS`, `STEP_LABELS`, `STEP_COLORS`, `STATUS_MAP`) + `STEP_MAP` (기존 유지). `DONE_STATE` 별 객체 (단계가 아니라 상태).
+  - `Dashboard.jsx`: 자체 STATUS_MAP / STEP_LABELS / STEP_KEYS 정의 제거 → `import { STEP_KEYS, STEP_LABELS, STATUS_MAP } from "../utils/tabs.js"`
+  - `KanbanView.jsx`: 자체 STEP_KEYS / STEP_LABELS / STEP_COLORS 정의 제거 → import
+  - `App.jsx`: 자체 STEP_MAP 제거 + 편집 탭 인라인 배열 → `STEP_KEYS.map(id => ... STEP_LABELS[id] ...)`
+- **회귀 검증** (1:1 매핑 확인):
+  - STEP_KEYS 8개 동일 순서: review/correction/script/guide/visual/modify/highlight/setgen
+  - STEP_COLORS / STATUS_MAP 색 모두 동일
+  - **유일한 의도된 변화**: STEP_LABELS guide "편집 가이드" → "편집가이드" (사용자 통일 결정 — 게시판 배지/현재 단계 컬럼/편집 탭/칸반 카드 모두 일관)
+- **누더기 회피**: 다음에 단계 추가/이름 변경/색 변경 시 `tabs.js` TAB_MAP 한 곳 수정.
+
+---
+
 ## 2026-05-09 — visual 단계 mismatch 버그 + 편집 탭 ✓ 일관성
 
 ### 10. fix(steps): STATUS_MAP visual 분리 + 편집 탭 ✓ 단계별 일관성
