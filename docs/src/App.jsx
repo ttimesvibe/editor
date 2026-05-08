@@ -1118,24 +1118,31 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
     });
   }, [cfg, saveDirtyTabsToKV, blocks, anal, diffs, scriptEdits, blockDeletions, hl, hlStats, hlVerdicts, hlEdits, hlMarkers, tab, updateStepProgress, withSaveLock]);
 
-  // ── 3분 디바운스 자동 저장 (변경 감지 → 3분 후 dirty 탭만 저장) ──
+  // ── 30s cascading throttle 자동 저장 (M3.b — 헌장 §1조 정식 충족) ──
+  // 이전: debounce — 사용자 입력마다 timer reset → 입력 멈춰야 fire
+  // 현재: cascading — 첫 dirty 시점에 timer 시작 → 30s 후 fire (입력 중에도)
+  //       fire 후 dirty 잔존 시 useEffect 재실행 → 새 cycle 자동 시작
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
 
   useEffect(() => {
     console.log("[r3-diag] autoSave useEffect run");
     if (cfg.apiMode === "mock" || !cfg.workerUrl) { console.log("[r3-diag] autoSave skipped: mock/no-workerUrl"); return; }
-    // R3.d.2.c — tabDataState 단일 source 사용 (옛 blocks 영역 제거)
     if (!tabDataState.correction?.blocks?.length) { console.log("[r3-diag] autoSave skipped: blocks empty"); return; }
-    // R3.b/R3.d.2.b — 11 탭 모두 변경 감지. tabDataState 단일 source 사용 (R3.d.2.b).
-    // fn 메타정보 영역 별도 보존 (schema 외).
     const currentSnapshot = JSON.stringify({ ...tabDataState, fn });
     if (currentSnapshot === lastSavedSnapshot) { console.log("[r3-diag] autoSave skipped: snapshot unchanged"); return; }
 
+    // M3.b cascading — 기존 timer 영역 보존 (입력 중에도 30s 주기 fire 보장).
+    // 헌장 §1조: "30초 후 fire → ... → 새 dirty 발생 시 다시 첫 dirty 부터 시작"
+    if (autoSaveTimer.current) {
+      console.log("[r3-diag] autoSave skipped: timer already running (cascading)");
+      return;
+    }
+
     console.log("[r3-diag] autoSave timer scheduled (30s), dirtyTabs=[" + [...dirtyTabs.current].join(",") + "]");
     setAutoSaveStatus("pending");
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
 
     autoSaveTimer.current = setTimeout(async () => {
+      autoSaveTimer.current = null;  // ← M3.b: clear ref → 다음 cycle 가능
       console.log("[r3-diag] autoSave timer FIRED, dirtyTabs=[" + [...dirtyTabs.current].join(",") + "]");
       const curId = sessionIdRef.current;
       if (!curId) { console.log("[r3-diag] autoSave fire skipped: no sessionId"); setAutoSaveStatus(""); return; }
@@ -1146,6 +1153,9 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         await withSaveLock(async () => {
           savingInProgress.current = true;
           try {
+            // M3.b — fire 시점의 snapshot 영역 (closure capture, 30s 전 영역). 그러나
+            // saveDirtyTabsToKV 가 tabDataState 직접 read (R3.d.2.b) → 최신 영역 PUT.
+            // setLastSavedSnapshot 는 fire 시점 snapshot 영역 (다음 useEffect 영역의 비교 영역).
             await saveDirtyTabsToKV(curId);
             setLastSavedSnapshot(currentSnapshot);
             setAutoSaveStatus("saved");
@@ -1154,19 +1164,24 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
           } finally { savingInProgress.current = false; }
         });
       } catch (e) {
-        console.warn("[save-flow] debounce auto-save failed:", e.message);
+        console.warn("[save-flow] cascading auto-save failed:", e.message);
         setAutoSaveStatus("");
       }
-    }, 30 * 1000); // CMS v2: 30초 (묶음 ② A-1, 3분 → 30초)
+    }, 30 * 1000);
 
+    // M3.b cascading — cleanup 영역 제거 (timer 영역이 useEffect 외부로 살아남음).
+    // 별도 unmount cleanup useEffect 로 분리.
+  }, [tabDataState, fn, lastSavedSnapshot, cfg]);
+
+  // M3.b — unmount 시 timer cleanup (별도 useEffect, 의도적 영역 분리)
+  useEffect(() => {
     return () => {
       if (autoSaveTimer.current) {
-        console.log("[r3-diag] autoSave cleanup (timer cleared before fire)");
         clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = null;
       }
     };
-    // R3.d.2.c — 옛 영역 deps 제거. tabDataState 단일 source.
-  }, [tabDataState, fn, lastSavedSnapshot, cfg]);
+  }, []);
 
   // CMS v2 — pagehide sendBeacon (묶음 ② A-2, TAB-MOD-01 모범 차용)
   useEffect(() => {
