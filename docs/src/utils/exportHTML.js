@@ -62,6 +62,13 @@ export function generateExportHTML(data) {
     return applyBlockDeletions(text, blockDeletions?.[block.index]);
   }
 
+  // ── 카드 렌더 상수 (guide / visual / 통합 섹션 공통) ──
+  const TYPE_COLORS = { A: "#059669", B: "#2563EB", C: "#F97316", D: "#059669", E: "#059669" };
+  const IC_LABELS = { A: "🎨 회상 일러스트", B: "🏢 공식 이미지/유튜브", C: "🏆 작품/성과물" };
+  const IC_COLORS = { A: "#8B5CF6", B: "#3B82F6", C: "#F59E0B" };
+  const RES_LABELS = { image: "🖼 이미지", video: "🎬 영상", data: "📊 그래픽", etc: "📌 기타" };
+  const RES_COLORS = { image: "#3B82F6", video: "#8B5CF6", data: "#22C55E", etc: "#F59E0B" };
+
   // ── 마커 하이라이트 적용 HTML ──
   function applyMarkers(text, blockIdx, markers) {
     const ranges = [];
@@ -84,6 +91,68 @@ export function generateExportHTML(data) {
     }
     if (cursor < text.length) result += esc(text.substring(cursor));
     return result;
+  }
+
+  // ── 카드 렌더 헬퍼 (guide / visual / 통합 섹션 공통, "use" verdict 만 통과) ──
+  // 각 헬퍼는 verdict 가 "use" 가 아니면 빈 문자열 반환 → caller 가 .filter(Boolean) 로 정리.
+  function renderGuideCard(h) {
+    const key = `${h.block_index}-${h.subtitle}`;
+    if (hlVerdicts?.[key] !== "use") return "";
+    const edited = hlEdits?.[key];
+    const cat = (h.type || "A").charAt(0);
+    const isUserMat = h.type?.startsWith("C_user");
+    const effectiveCat = (cat === "C" && !isUserMat) ? "A" : cat;
+    const typeColor = TYPE_COLORS[effectiveCat] || "#059669";
+    const catLabel = effectiveCat === "B" ? "용어설명" : isUserMat ? "자료" : "자막";
+    return `<div class="inline-card" style="border-left:3px solid ${typeColor}">
+      <span class="badge" style="background:${typeColor}15;color:${typeColor}">${catLabel}</span>
+      <span style="font-size:11px;color:#059669;margin-left:4px">✅</span>
+      <div style="font-size:14px;font-weight:500;color:${typeColor};line-height:1.6;margin-top:4px;white-space:pre-line">${esc(edited || h.subtitle)}</div>
+    </div>`;
+  }
+  function renderVisCard(v, verdicts) {
+    if (verdicts?.[`vis-${v.id}`] !== "use") return "";
+    const chartHTML = renderChartHTML(v.type, v.chart_data, v.title);
+    return `<div class="inline-card" style="border-left:3px solid #3B82F6">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:13px">📊</span>
+        <span class="badge" style="background:rgba(59,130,246,0.1);color:#3B82F6">${esc(v.type)}</span>
+        <span style="font-weight:600;color:#3B82F6;flex:1">${esc(v.title)}</span>
+        <span style="font-size:11px;color:#059669">✅</span>
+      </div>
+      ${v.reason ? `<div style="font-size:12px;color:#666;margin-top:4px">${esc(v.reason)}</div>` : ""}
+      ${chartHTML}
+      <div style="font-size:11px;color:#888;margin-top:2px">${v.priority || ""} ${v.duration_seconds ? "· " + v.duration_seconds + "초" : ""}</div>
+    </div>`;
+  }
+  function renderIcCard(ic, verdicts) {
+    if (verdicts?.[`ic-${ic.id}`] !== "use") return "";
+    const icColor = IC_COLORS[ic.type] || "#3B82F6";
+    return `<div class="inline-card" style="border-left:3px solid ${icColor}">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:13px">${(IC_LABELS[ic.type] || "🎬").split(" ")[0]}</span>
+        <span class="badge" style="background:${icColor}15;color:${icColor}">Type ${esc(ic.type)}</span>
+        <span style="font-weight:600;color:${icColor};flex:1">${esc(ic.title)}</span>
+        <span style="font-size:11px;color:#059669">✅</span>
+      </div>
+      ${ic.trigger_quote ? `<div style="font-style:italic;color:#555;margin:4px 0;border-left:2px solid #ddd;padding-left:8px;font-size:13px">"${esc(ic.trigger_quote)}"</div>` : ""}
+      ${ic.instruction ? `<div style="font-size:12px;color:#666">${esc(ic.instruction)}</div>` : ""}
+      ${ic.image_prompt ? `<div style="font-size:11px;color:#7C3AED;margin-top:4px">🖼 ${esc(ic.image_prompt)}</div>` : ""}
+      ${ic.search_keywords?.length ? `<div style="margin-top:3px">${ic.search_keywords.map(k => `<span class="tag">${esc(k)}</span>`).join(" ")}</div>` : ""}
+    </div>`;
+  }
+  function renderResCard(r, verdicts) {
+    if (verdicts?.[`res-${r.id}`] !== "use") return "";
+    const rc = RES_COLORS[r.type] || "#F59E0B";
+    return `<div class="inline-card" style="border-left:3px solid #F97316">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:13px">📎</span>
+        <span class="badge" style="background:${rc}15;color:${rc}">${RES_LABELS[r.type] || r.type}</span>
+        <span style="font-weight:600;color:#F97316;flex:1">${esc(r.text)}</span>
+        <span style="font-size:11px;color:#059669">✅</span>
+      </div>
+      ${r.source ? `<div style="font-size:12px;color:#888;margin-top:2px">출처: ${esc(r.source)}</div>` : ""}
+    </div>`;
   }
 
   // ═══ SECTIONS ═══
@@ -129,29 +198,13 @@ export function generateExportHTML(data) {
       if (!guidesByBlock[bi]) guidesByBlock[bi] = [];
       guidesByBlock[bi].push(h);
     }
-    const TYPE_COLORS = { A: "#059669", B: "#2563EB", C: "#F97316", D: "#059669", E: "#059669" };
     const rows = blocks.map(b => {
       const guides = guidesByBlock[b.index] || [];
       const corrected = getCorrectedPlain(b);
       const markedText = applyMarkers(corrected, b.index, hlMarkers);
       const hasGuides = guides.length > 0;
-      // 가이드 카드 — "사용" verdict만 표시
-      const cards = guides.map(h => {
-        const key = `${h.block_index}-${h.subtitle}`;
-        const verdict = hlVerdicts?.[key];
-        if (verdict !== "use") return ""; // 사용이 아니면 내보내기에서 제외
-        const edited = hlEdits?.[key];
-        const cat = (h.type || "A").charAt(0);
-        const isUserMat = h.type?.startsWith("C_user");
-        const effectiveCat = (cat === "C" && !isUserMat) ? "A" : cat;
-        const typeColor = TYPE_COLORS[effectiveCat] || "#059669";
-        const catLabel = effectiveCat === "B" ? "용어설명" : isUserMat ? "자료" : "자막";
-        return `<div class="inline-card" style="border-left:3px solid ${typeColor}">
-          <span class="badge" style="background:${typeColor}15;color:${typeColor}">${catLabel}</span>
-          <span style="font-size:11px;color:#059669;margin-left:4px">✅</span>
-          <div style="font-size:14px;font-weight:500;color:${typeColor};line-height:1.6;margin-top:4px;white-space:pre-line">${esc(edited || h.subtitle)}</div>
-        </div>`;
-      }).filter(Boolean).join("\n");
+      // 가이드 카드 — renderGuideCard 가 verdict 필터 + 색/라벨 처리
+      const cards = guides.map(renderGuideCard).filter(Boolean).join("\n");
       return `<div class="block${hasGuides ? " has-data" : ""}">
         <div class="block-header"><span class="block-idx">#${b.index}</span> <span class="speaker">${esc(b.speaker)}</span> <span class="ts">${esc(b.timestamp)}</span></div>
         <div class="block-text">${markedText}</div>
@@ -303,10 +356,7 @@ export function generateExportHTML(data) {
   let visualSection = "";
   const vc = exportCache?.visual;
   if (vc && blocks?.length > 0) {
-    const IC_LABELS = { A: "🎨 회상 일러스트", B: "🏢 공식 이미지/유튜브", C: "🏆 작품/성과물" };
-    const IC_COLORS = { A: "#8B5CF6", B: "#3B82F6", C: "#F59E0B" };
-    const RES_LABELS = { image: "🖼 이미지", video: "🎬 영상", data: "📊 그래픽", etc: "📌 기타" };
-    const RES_COLORS = { image: "#3B82F6", video: "#8B5CF6", data: "#22C55E", etc: "#F59E0B" };
+    // (IC/RES 상수는 generateExportHTML 상위 영역에 lift 됨 — guide / 통합 섹션 공유)
     // 블록별 아이템 그룹핑
     const visByBlock = {}, icByBlock = {}, resByBlock = {};
     for (const v of (vc.visualGuides || [])) { const bi = (v.block_range || [])[0]; if (bi != null) { if (!visByBlock[bi]) visByBlock[bi] = []; visByBlock[bi].push(v); } }
@@ -322,56 +372,10 @@ export function generateExportHTML(data) {
       const hasData = vis.length + ics.length + res.length > 0;
       const corrected = getCorrectedPlain(b);
       const markedText = applyMarkers(corrected, b.index, vc.visualMarkers);
-      // 시각화 카드 — "사용"만 표시 + 차트 시각화 포함
-      const visCards = vis.map(v => {
-        const vd = vc.verdicts?.[`vis-${v.id}`];
-        if (vd !== "use") return ""; // 사용이 아니면 제외
-        const chartHTML = renderChartHTML(v.type, v.chart_data, v.title);
-        return `<div class="inline-card" style="border-left:3px solid #3B82F6">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px">📊</span>
-            <span class="badge" style="background:rgba(59,130,246,0.1);color:#3B82F6">${esc(v.type)}</span>
-            <span style="font-weight:600;color:#3B82F6;flex:1">${esc(v.title)}</span>
-            <span style="font-size:11px;color:#059669">✅</span>
-          </div>
-          ${v.reason ? `<div style="font-size:12px;color:#666;margin-top:4px">${esc(v.reason)}</div>` : ""}
-          ${chartHTML}
-          <div style="font-size:11px;color:#888;margin-top:2px">${v.priority || ""} ${v.duration_seconds ? "· " + v.duration_seconds + "초" : ""}</div>
-        </div>`;
-      }).filter(Boolean).join("");
-      // 인서트 컷 카드 — "사용"만 표시
-      const icCards = ics.map(ic => {
-        const vd = vc.verdicts?.[`ic-${ic.id}`];
-        if (vd !== "use") return "";
-        const icColor = IC_COLORS[ic.type] || "#3B82F6";
-        return `<div class="inline-card" style="border-left:3px solid ${icColor}">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px">${(IC_LABELS[ic.type] || "🎬").split(" ")[0]}</span>
-            <span class="badge" style="background:${icColor}15;color:${icColor}">Type ${esc(ic.type)}</span>
-            <span style="font-weight:600;color:${icColor};flex:1">${esc(ic.title)}</span>
-            <span style="font-size:11px;color:#059669">✅</span>
-          </div>
-          ${ic.trigger_quote ? `<div style="font-style:italic;color:#555;margin:4px 0;border-left:2px solid #ddd;padding-left:8px;font-size:13px">"${esc(ic.trigger_quote)}"</div>` : ""}
-          ${ic.instruction ? `<div style="font-size:12px;color:#666">${esc(ic.instruction)}</div>` : ""}
-          ${ic.image_prompt ? `<div style="font-size:11px;color:#7C3AED;margin-top:4px">🖼 ${esc(ic.image_prompt)}</div>` : ""}
-          ${ic.search_keywords?.length ? `<div style="margin-top:3px">${ic.search_keywords.map(k => `<span class="tag">${esc(k)}</span>`).join(" ")}</div>` : ""}
-        </div>`;
-      }).filter(Boolean).join("");
-      // 수동 자료 카드 — "사용"만 표시
-      const resCards = res.map(r => {
-        const vd = vc.verdicts?.[`res-${r.id}`];
-        if (vd !== "use") return "";
-        const rc = RES_COLORS[r.type] || "#F59E0B";
-        return `<div class="inline-card" style="border-left:3px solid #F97316">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px">📎</span>
-            <span class="badge" style="background:${rc}15;color:${rc}">${RES_LABELS[r.type] || r.type}</span>
-            <span style="font-weight:600;color:#F97316;flex:1">${esc(r.text)}</span>
-            <span style="font-size:11px;color:#059669">✅</span>
-          </div>
-          ${r.source ? `<div style="font-size:12px;color:#888;margin-top:2px">출처: ${esc(r.source)}</div>` : ""}
-        </div>`;
-      }).filter(Boolean).join("");
+      // 카드 — 헬퍼가 verdict 필터 통합 처리
+      const visCards = vis.map(v => renderVisCard(v, vc.verdicts)).filter(Boolean).join("");
+      const icCards  = ics.map(ic => renderIcCard(ic, vc.verdicts)).filter(Boolean).join("");
+      const resCards = res.map(r => renderResCard(r, vc.verdicts)).filter(Boolean).join("");
       return `<div class="block${hasData ? " has-data" : ""}">
         <div class="block-header"><span class="block-idx">#${b.index}</span> <span class="speaker">${esc(b.speaker)}</span> <span class="ts">${esc(b.timestamp)}</span></div>
         <div class="block-text">${markedText}</div>
@@ -380,6 +384,68 @@ export function generateExportHTML(data) {
     }).join("\n");
     const summary = [totalVis > 0 ? `시각화 ${totalVis}건` : "", totalIc > 0 ? `인서트 컷 ${totalIc}건` : "", totalRes > 0 ? `수동 자료 ${totalRes}건` : ""].filter(Boolean).join(" · ");
     visualSection = section("📊 자료 & 그래픽 가이드", `<p class="meta">${summary}</p>${rows}`);
+  }
+
+  // 5b. 통합 가이드 — 편집가이드 + 자료/그래픽 한 화면 (편집자 요청)
+  // 같은 corrected 블록 텍스트 위에 hlMarkers + visualMarkers 합쳐 적용 + 양쪽 카드 stack.
+  // 마커 충돌은 '시작 빠른 쪽 우선' (불편 감수, 사용자 명시 결정).
+  let combinedSection = "";
+  const hasGuideData = (hl?.length || 0) > 0;
+  const hasVisualData = !!vc;
+  if (blocks?.length > 0 && (hasGuideData || hasVisualData)) {
+    // 블록별 그룹핑 (guide / visual 섹션 로직 동일하게 재사용)
+    const cGuidesByBlock = {};
+    for (const h of (hl || [])) {
+      const bi = h.block_index;
+      if (!cGuidesByBlock[bi]) cGuidesByBlock[bi] = [];
+      cGuidesByBlock[bi].push(h);
+    }
+    const cVisByBlock = {}, cIcByBlock = {}, cResByBlock = {};
+    for (const v of (vc?.visualGuides || [])) { const bi = (v.block_range || [])[0]; if (bi != null) { if (!cVisByBlock[bi]) cVisByBlock[bi] = []; cVisByBlock[bi].push(v); } }
+    for (const ic of (vc?.insertCuts || [])) { const bi = (ic.block_range || [])[0]; if (bi != null) { if (!cIcByBlock[bi]) cIcByBlock[bi] = []; cIcByBlock[bi].push(ic); } }
+    for (const r of (vc?.manualResources || [])) { const bi = r.block_index; if (bi != null) { if (!cResByBlock[bi]) cResByBlock[bi] = []; cResByBlock[bi].push(r); } }
+    // 마커 합치기 — id 충돌 방지 prefix (hl: / vis:) 후 spread
+    const mergedMarkers = {};
+    for (const [k, m] of Object.entries(hlMarkers || {})) mergedMarkers[`hl:${k}`] = m;
+    for (const [k, m] of Object.entries(vc?.visualMarkers || {})) mergedMarkers[`vis:${k}`] = m;
+
+    const cRows = blocks.map(b => {
+      const guides = cGuidesByBlock[b.index] || [];
+      const vis = cVisByBlock[b.index] || [];
+      const ics = cIcByBlock[b.index] || [];
+      const res = cResByBlock[b.index] || [];
+      const corrected = getCorrectedPlain(b);
+      const markedText = applyMarkers(corrected, b.index, mergedMarkers);
+      // 카드 순서: 편집가이드(자막) → 시각화 → 인서트 컷 → 수동 자료
+      const guideCards = guides.map(renderGuideCard).filter(Boolean).join("\n");
+      const visCards = vis.map(v => renderVisCard(v, vc?.verdicts)).filter(Boolean).join("");
+      const icCards  = ics.map(ic => renderIcCard(ic, vc?.verdicts)).filter(Boolean).join("");
+      const resCards = res.map(r => renderResCard(r, vc?.verdicts)).filter(Boolean).join("");
+      const hasData = !!(guideCards || visCards || icCards || resCards);
+      return `<div class="block${hasData ? " has-data" : ""}">
+        <div class="block-header"><span class="block-idx">#${b.index}</span> <span class="speaker">${esc(b.speaker)}</span> <span class="ts">${esc(b.timestamp)}</span></div>
+        <div class="block-text">${markedText}</div>
+        ${guideCards}${visCards}${icCards}${resCards}
+      </div>`;
+    }).join("\n");
+
+    // 통계 — 모두 verdict==="use" 만 카운트 (실제 export 카드 수와 일치)
+    const useGuide = (hl || []).filter(h => hlVerdicts?.[`${h.block_index}-${h.subtitle}`] === "use").length;
+    const useVis = (vc?.visualGuides || []).filter(v => vc?.verdicts?.[`vis-${v.id}`] === "use").length;
+    const useIc  = (vc?.insertCuts   || []).filter(ic => vc?.verdicts?.[`ic-${ic.id}`] === "use").length;
+    const useRes = (vc?.manualResources || []).filter(r => vc?.verdicts?.[`res-${r.id}`] === "use").length;
+    const cSummary = [
+      useGuide > 0 ? `강조자막 ${useGuide}건` : "",
+      useVis > 0 ? `시각화 ${useVis}건` : "",
+      useIc > 0 ? `인서트 컷 ${useIc}건` : "",
+      useRes > 0 ? `수동 자료 ${useRes}건` : "",
+    ].filter(Boolean).join(" · ") || "표시할 콘텐츠 없음";
+
+    combinedSection = section(
+      "🧩 통합 가이드 (강조자막 + 자료/그래픽)",
+      `<p class="meta">${cSummary} · 마커 충돌 시 시작 빠른 쪽 표시</p>${cRows}`,
+      false  // 기본 접힘 — 위 두 섹션이 펼쳐 있으니 통합은 보조 view 로 시작
+    );
   }
 
   // 6. 하이라이트 클립
@@ -499,6 +565,7 @@ export function generateExportHTML(data) {
   ${analSection}
   ${guideSection}
   ${visualSection}
+  ${combinedSection}
   ${modifySection}
   ${highlightSection}
   ${setgenSection}

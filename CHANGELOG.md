@@ -5,6 +5,26 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — 내보내기 HTML 통합 가이드 섹션 추가 + 카드 렌더 헬퍼 추출
+
+### 7. feat(export): 🧩 통합 가이드 섹션 신설 (편집자 요청)
+
+- **요청**: "편집가이드의 추가 콘텐츠(자막)와 자료/그래픽의 추가 콘텐츠(자료)를 한꺼번에 보고 싶다"
+- **분석**: 두 섹션은 같은 블록 텍스트(`getCorrectedPlain`) 기반. 차이는 (1) 마커 source(`hlMarkers` vs `visualMarkers`), (2) 카드 source(자막 / 시각화 / 인서트 컷 / 수동 자료) 두 가지뿐.
+- **사용자 결정**:
+  - 위치: `편집가이드 → 자료&그래픽 → 통합` (분리 → 통합 순서)
+  - 마커 충돌: 단순 합치기, 시작 빠른 쪽 표시 (불편 감수 명시)
+- **변경**:
+  - `exportHTML.js` 의 카드 색상 상수 (`TYPE_COLORS / IC_LABELS / IC_COLORS / RES_LABELS / RES_COLORS`) 를 함수 상위로 lift
+  - 카드 렌더 헬퍼 4종 추출 (`renderGuideCard / renderVisCard / renderIcCard / renderResCard`) — 모두 verdict==="use" 필터 통합
+  - `guideSection` / `visualSection` 인라인 카드 → 헬퍼 호출로 교체 (시각 결과 동등)
+  - 새 `combinedSection` — `hlMarkers` + `visualMarkers` prefix 합친 후 `applyMarkers`, 카드는 자막 → 시각화 → 인서트 컷 → 수동 자료 순 stack
+  - 기본 접힘 (`open=false`) — 분리 view 가 메인, 통합은 보조 view
+- **검증**: 빌드 통과. 리팩터부 출력 동등성 — 헬퍼는 인라인 코드를 그대로 옮긴 것 (string template 내용 동일).
+- **누더기 회피**: 카드 코드 ~80 줄 중복을 4 헬퍼로 통합. 이후 카드 형식 변경 시 한 곳만 수정.
+
+---
+
 ## 2026-05-09 — SessionListModal 폐기 (Dashboard 게시판 superset)
 
 ### 6. cleanup(sessions): /sessions 라우트 + SessionListModal + updateSessionIndex 일괄 제거
