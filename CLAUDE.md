@@ -87,9 +87,11 @@ npx -y wrangler kv key list --namespace-id=<id> --remote
 - 배포: `cd worker && npx wrangler deploy`
 - 로그: `npx wrangler tail`
 
-### test 환경 = `lab` (★ 2026-05-09 재설계, 신설)
+### test 환경 = `lab` (★ 2026-05-09 재설계 + fresh v2 방향 전환)
 
 **옛 test (`editor` worker / `editor-sessions` KV / `ttimes-editor` repo) 의 "editor" 단어 충돌 + 5/6 코드 stale 문제 해소를 위해 `lab` 으로 재설계.**
+
+**2026-05-09 16:?? 추가 방향 전환**: 사용자 명시 — "v1 에서 겹겹이 쌓아올린 v2 가 아니라 **fresh v2** 가 필요. 코드 효율화. v3/v4 의 디딤돌". 즉 prod 코드 복사 X, 사료 (`cms-v2-plan/` 188 개 .md) **전수 정독 → 본질 추출 → fresh 설계 → 모듈별 구현**. 다 세션 작업. **자세한 진행 사료**: [`ops/lab-v2-fresh-2026-05-09.md`](./ops/lab-v2-fresh-2026-05-09.md)
 
 | 레벨 | 값 |
 |---|---|

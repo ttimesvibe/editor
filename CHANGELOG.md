@@ -5,6 +5,32 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — lab 방향 전환 (코드 복사 → fresh v2 설계, 다 세션)
+
+### 17. ops(lab): 방향 전환 — prod 코드 복사 → fresh v2 설계 (사료 전수 정독 기반)
+
+- **사용자 명시 방향**: "v1 에서 겹겹이 쌓아올린 v2 말고 fresh 하게 새롭게 설계한 v2 가 필요한 단계. 코드를 더욱 효율화 해서 v2 를 새롭게 설계해서 만드는게 향후 v3, v4 로 가는데 도움이 될 수 있다."
+- **방법**: `cms-v2-plan/` 188 개 .md + 8 옛 앱 (ttimes-*) + prod 코드 **전수 정독** → 본질 추출 → 효율화 설계 → 모듈별 구현. **빈 곳 0**.
+- **속도**: "절대로 빠른 방법이 아니라 완벽한 최선의 방향" — 다 세션 (수십 시간) 작업.
+- **옛 ops 사료** ([`ops/lab-setup-2026-05-09.md`](./ops/lab-setup-2026-05-09.md)) **superseded 표시 + 보존**:
+  - Phase 0 인프라 (GitHub PAT / Cloudflare Worker `lab` / KV `lab-sessions`) 는 새 방향에서도 사용 → 사료 가치
+  - Phase 1.1 commit (`0b4711d`) 의 결정 매트릭스 박제 보존
+  - 옛 → 새 흐름 추적 가능
+- **새 master 사료**: [`ops/lab-v2-fresh-2026-05-09.md`](./ops/lab-v2-fresh-2026-05-09.md) — 사료 정독 + 본질 + 설계 + 구현 계획이 자라며 누적
+- **사용자 약속 (사료의 헌장)**:
+  1. 전수 정독 — 188 개 + 8 옛 앱 + prod 코드. 빠뜨림 0
+  2. 빈 곳 0 — 모든 사료 내용이 구현 가능한 형태로 박제
+  3. 최선 vs 빠름 — 빠른 길 명시적 거부
+  4. 사료 박제 디시플린 — 정독/설계/계획 모두 누적
+- **본 commit 의 박제**:
+  - `ops/lab-setup-2026-05-09.md` superseded 표시 (보존)
+  - `ops/lab-v2-fresh-2026-05-09.md` 신설 (master doc, Stage 0 ~ Stage 6 윤곽 + 인프라 박제 + 사료 우선순위)
+  - `ops/README.md` 인덱스 갱신 (★ 신, 옛 superseded 표시)
+  - `CLAUDE.md` lab 섹션 — 방향 전환 박제 + 새 master doc 참조
+  - 본 entry — CHANGELOG 박제
+
+---
+
 ## 2026-05-09 — test 환경 재설계 시작 (`lab` 신설, Phase 1 시작)
 
 ### 16. ops(lab): test 환경 재설계 — 옛 `editor` (test) → 새 `lab` 환경 신설 시작
