@@ -5,6 +5,65 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — OneDrive 동기화 사고 + chimera 차단 + 롤백 (★ 사고 보고)
+
+### 15. ops(incident): OneDrive 가 working dir 18 파일을 옛 캐시로 덮어쓰기 → chimera 위험 → 롤백
+
+- **사건**: 마지막 commit `3ab1184` (05:08:54) 이후, 14:03:54 에 OneDrive 가 batch sync 로 working dir 의 18 파일을 옛 캐시 버전으로 덮어쓰기. 이 PC 의 신 버전은 `*-MAIN-HONG.*` 사본 17개로 백업됨 (PC 호스트명 접미사)
+- **chimera 위험**: 옛 회귀된 working dir 위에 view toggle Edit (App.jsx 1줄 + Dashboard.jsx ~25줄) 추가 → 옛 자체 정의 STATUS_MAP + 신 view toggle 변경 mix. 빌드는 syntax 통과로 성공 → "정상" 오판 위험. commit/push 했다면 단계 정의 통합 (#11) 등 무효화 위험
+- **발견**: 빌드 시 `STEP_KEYS not exported by tabs.js` 에러 → 사용자 의심 제기 → 정밀 검증 (HEAD vs working dir vs MAIN-HONG 3-way diff + 파일별 timestamp 분석 + 11 marker 검증) → OneDrive 사고 확정
+- **결정 (사용자 명시)**: "코드 패치 X, 히스토리 롤백만"
+  - `git reset --hard HEAD` + `git clean -fd` (3ab1184 시점으로 완전 회귀)
+  - View toggle WIP 변경 (~26 줄) 손실 수용. 다시 요청 후 진행
+- **결정 기록 (재발 방지)**:
+  - **OneDrive 동기화 폴더에서 git 작업 시 위험 인지** — sync 사고 시 chimera. 작업 중엔 OneDrive 일시 중지 권장
+  - **빌드 통과 ≠ 정상**. syntax error 만 잡고 의미 회귀 (옛 자체 정의 vs 신 import 등) 는 못 잡음
+  - **Edit 전 Read 도구로 file 재검증 의무** — OneDrive 회귀 즉시 발견 가능
+  - **CHANGELOG 박제 누수가 사고 detection 지연**. 모든 commit + 절차/사고 자체에 박제 의무 (이 항목 #15 가 그 약속의 박제)
+
+---
+
+## 2026-05-09 — 캘린더 동기화 Apps Script 권한 만료 (외부 작업)
+
+### 14. ops(calendar): Apps Script OAuth 재승인 + `appsscript.json` manifest oauthScopes 락
+
+- **증상**: 일정 등록 시 메일은 오는데 Google Calendar (ttimes6000@gmail.com) 에 이벤트 등록 안 됨
+- **진단** (`wrangler tail` 라이브 로그):
+  ```
+  [shoot create] Apps Script status: 403
+  [shoot create] Apps Script response: <!DOCTYPE html>... (Google 권한 거부 페이지)
+  ```
+- **원인**: Apps Script 코드에 새 API/scope 추가 → OAuth 자동 무효화. 같은 패턴 `4a74c3c` (4/20) fix 후 재발
+- **조치 (Worker 코드 변경 0)**:
+  1. Apps Script 에디터 → "권한 검토" 클릭 → 재승인
+  2. `appsscript.json` manifest 에 `oauthScopes` 명시 락 (`calendar` / `calendar.events` / `script.external_request`) → 코드 수정 시 자동 scope 추가 차단
+  3. 배포 형식: `executeAs: "USER_DEPLOYING"` + `access: "ANYONE_ANONYMOUS"`
+- **재발 방지**: manifest 락 후 코드 수정 시 재승인 거의 X. 다음 비슷한 증상 시 `wrangler tail` 의 Apps Script `status` code 부터 점검 → 95% 진단 가능
+
+---
+
+## 2026-05-09 — 상태 배지 justifySelf:start (grid stretch 차단)
+
+### 13. fix(board): 상태 배지 `justifySelf:"start"` — grid item stretch 차단 — `3ab1184`
+
+- **증상**: 80px 컬럼 확장 후 모든 배지 ("세트", "편집가이드", "자료·그래픽" 등) 가 cell 폭 거의 가득 채워 길어 보임
+- **원인**: `<span style={{display:"inline-block"}}>` 가 grid cell 직접 자식 → grid item 으로 승격되어 inline-level box 도 blockified, default `justify-self: stretch` 로 cell 너비 채움. 72px 시절엔 텍스트가 거의 cell 채워 안 보였던 것이 80px 로 늘리니 빈 공간 생겨 stretch 효과 명확히 보임
+- **수정**: `renderStatusBadge` + Trash row "삭제됨" 배지 둘 다 `justifySelf:"start"` 추가. 자체 폭만 차지하고 좌측 sticky
+- **회귀**: 0 — CSS 속성 추가만. 짧은 라벨 ("세트") 부터 긴 라벨 ("자료·그래픽") 까지 자체 폭으로 표시
+
+---
+
+## 2026-05-09 — 게시판 상태 컬럼 폭 조정
+
+### 12. style(board): 상태 컬럼 72px → 80px (배지 침범 해소) — `7b71c92`
+
+- **증상**: "편집가이드" / "하이라이트" 5자 배지가 72px 컬럼 거의 가득 (text 55px + padding 16px ≈ 71px) → 프로젝트명 컬럼 침범 보임
+- **수정**: `BOARD_GRID` 의 상태 컬럼 `72px → 80px`. 9px 여백 확보
+- **회귀**: 1fr 프로젝트명에서 8px 양보. truncate 40자 영향 0
+- **후속 발견**: 80px 확장 후 grid stretch 효과로 모든 배지가 cell 가득 채우는 별 문제 (#13) 발견 → 같은 날 fix
+
+---
+
 ## 2026-05-09 — 단계 정의 단일 소스 통합 (4-5곳 산재 → tabs.js 한 곳)
 
 ### 11. refactor(steps): STEP_KEYS/LABELS/COLORS/MAP/STATUS_MAP 단일 소스 통합
