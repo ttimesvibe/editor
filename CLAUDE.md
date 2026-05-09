@@ -87,11 +87,44 @@ npx -y wrangler kv key list --namespace-id=<id> --remote
 - 배포: `cd worker && npx wrangler deploy`
 - 로그: `npx wrangler tail`
 
-### refactor-track 테스트 (별도 Worker)
-- 이름: **`ttimes-editor`** (추정, ttimesvibe 계정) — 실제 URL 은 운영자 확인 필요
-- 바인딩: SESSIONS → `9e4f5bb9cd294b86868e4b9d502adbcc` (editor-sessions, 복수)
-- **현재 이 리포의 `worker/wrangler.toml` 은 prod 전용**. 테스트 쪽 배포는 별도 설정/리포에서 이뤄짐. 이 리포에서 `wrangler deploy` 하면 prod 만 반영됨.
-- test-only 신규 기능(Kanban 등) 도 프로드 코드에 `if` 분기로 들어가 있을 수 있고, 분리된 브랜치/파일로 있을 수도 있음 — 작업 전 커밋 히스토리로 확인 필요.
+### test 환경 = `lab` (★ 2026-05-09 재설계, 신설)
+
+**옛 test (`editor` worker / `editor-sessions` KV / `ttimes-editor` repo) 의 "editor" 단어 충돌 + 5/6 코드 stale 문제 해소를 위해 `lab` 으로 재설계.**
+
+| 레벨 | 값 |
+|---|---|
+| 로컬 폴더 | `D:\OneDrive - 머니투데이\개발\통합 개발\lab\` |
+| GitHub | `github.com/ttimesvibe/lab` |
+| Worker | `lab` (ttimesvibe 계정 `fb0a10864393158e940b149b3ead37f6`) |
+| Worker URL | `https://lab.ttimes.workers.dev` |
+| Worker bindings | KV `SESSIONS` → `lab-sessions` + 3 secrets (OPENAI/GEMINI 은 prod 와 공유, JWT_SECRET 별도) |
+| KV namespace | `lab-sessions` (id `fbb8da8adcae4ee0a555abff66f798ac`) |
+| Pages URL | `https://ttimesvibe.github.io/lab/` (예정) |
+| 첫 baseline | prod editor HEAD (`3ab1184` + CHANGELOG `15b5bd1`) |
+| Cron triggers | 없음 |
+
+**자세한 setup 사료**: [`ops/lab-setup-2026-05-09.md`](./ops/lab-setup-2026-05-09.md) — 결정 매트릭스 / Phase 별 단계 / 진행 로그 / 사고 박제 모두.
+
+**함의 — lab 환경 조사 시 양쪽 모두 확인 의무**:
+1. Cloudflare API (worker `lab` / KV `lab-sessions`)
+2. 로컬 git repo `D:\…\통합 개발\lab\` (Remote: `ttimesvibe/lab`)
+
+prod ↔ lab 코드 promote 는 **수동 port 작업** (cherry-pick 또는 수동 적용). 자동 sync X.
+
+### 옛 test 환경 (Phase 3 에서 정리 예정 — 사용자 명시 "맨 마지막")
+
+> 아래 영역은 **lab 신설 + 검증 완료 후 폐기 예정**. 그 동안은 활성 상태로 보존 (롤백 안전망).
+
+| 레벨 | 값 (옛 test, 폐기 예정) |
+|---|---|
+| Worker | `editor` (ttimesvibe) — URL `editor.ttimes.workers.dev`, 마지막 배포 5/5 |
+| Worker (구) | `ttimes-edit` (ttimesvibe) — 4/12 죽음, 500 응답 |
+| KV | `editor-sessions` (id `9e4f5bb9...`, 90 keys) — lab-sessions 으로 마이그레이션 후 폐기 |
+| KV (구) | `ttimes-editor-sessions` (id `b4c4e3c3...`, 8 keys, 레거시) |
+| GitHub | `ttimesvibe/ttimes-editor` (10 MB, 5/5 마지막 push, 사용자 결정 = 삭제) |
+| 로컬 | `ttimes-editor-test/` (사용자가 → `lab/` 으로 rename + 비움 — 콘텐츠 0) |
+
+상세 정리 단계: `ops/lab-setup-2026-05-09.md` 의 "Phase 3" 섹션.
 
 ### 절대 금지
 - `wrangler.toml` 에 `[placement]` 블록 추가 금지 — 대시보드 Region 설정(GCP US)이 덮어씌워짐.
@@ -123,3 +156,4 @@ npx -y wrangler kv key list --namespace-id=<id> --remote
 - [ ] `config.js` 의 `workerUrl` 변경 시 `build.js` 의 `CANONICAL_WORKER_URL` 도 같이 수정했는가?
 - [ ] worker 배포 후 `wrangler tail` 로 실제 반영 확인했는가?
 - [ ] git push 타깃이 `editor/main` 인가? (`origin/main` 아님)
+- [ ] **test 환경 조사 시 Cloudflare API _만_ 보지 말 것** — 로컬 `ttimes-editor-test/` git repo 도 함께 확인 (코드 변경 promote 여부, 별 commit 들 등). 2026-05-09 사고: API 만 보고 로컬 repo 빠뜨려 사용자 지적받음.

@@ -5,6 +5,24 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-09 — test 환경 재설계 시작 (`lab` 신설, Phase 1 시작)
+
+### 16. ops(lab): test 환경 재설계 — 옛 `editor` (test) → 새 `lab` 환경 신설 시작
+
+- **배경**: prod editor v2 안정화 (#1~#15) 완료 → 사용자 명시 "test 도 prod v2 기반으로 시금석 재설계". 옛 test 측 (worker `editor` / KV `editor-sessions` / repo `ttimes-editor`) 의 단어 충돌 ("editor" prod 로컬 폴더와 동일) + 5/6 코드 stale 문제 해소.
+- **사용자 결정 매트릭스**: 이름 `lab` (모든 레벨 일관) / KV 90 keys 마이그레이션 / OPENAI·GEMINI 키 공유, JWT_SECRET 별도 / Pages prod 동일 형식 / 첫 baseline = HEAD (`3ab1184` + 본 commit) / 옛 환경 정리 = Phase 3 deferred.
+- **Phase 0 (사용자 직접 완료)**: lab/ 폴더 + GitHub `ttimesvibe/lab` + Worker `lab` (`lab.ttimes.workers.dev`) + KV `lab-sessions` (`fbb8da8a...`) 신설.
+- **Phase 1 (이번 작업 — 본 commit 은 시작 박제)**: prod HEAD 코드 → lab 복사 + 인프라 설정 + KV 마이그레이션 + Pages 활성 + 라이브 검증.
+- **Phase 3 (deferred)**: 옛 worker `editor` / `ttimes-edit` 폐기 + GitHub `ttimes-editor` 삭제 + KV 정리. 사용자 명시 "복잡하니 맨 마지막".
+- **본 commit 의 박제**:
+  - **새 `editor/ops/` 폴더 신설** — 다단계 절차 사료 누적용 + `README.md` (인덱스 / 형식 규약 / 디시플린)
+  - **`editor/ops/lab-setup-2026-05-09.md` 신설** — lab 신설 작업의 결정/단계/진행 로그 사료
+  - **`editor/CLAUDE.md` 갱신** — lab 섹션 + 옛 test (Phase 3 폐기 예정) 섹션 분리 박제
+  - **본 entry** — CHANGELOG 에서 ops 사료 참조
+- **디시플린 박제 (이번 세션 3차 누수)**: 작은 commit 이라고 CHANGELOG skip → 사고 발생 시에도 박제 누락 → 큰 작업 (lab 재설계) 도 사료 없이 진행 직전 사용자 지적. 이후 모든 ops 작업 = 사료 (`ops/`) + commit (CHANGELOG) + 운영 메모 (CLAUDE.md) 3 군데 동시 박제 의무.
+
+---
+
 ## 2026-05-09 — OneDrive 동기화 사고 + chimera 차단 + 롤백 (★ 사고 보고)
 
 ### 15. ops(incident): OneDrive 가 working dir 18 파일을 옛 캐시로 덮어쓰기 → chimera 위험 → 롤백
