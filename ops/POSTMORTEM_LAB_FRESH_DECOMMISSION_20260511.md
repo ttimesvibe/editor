@@ -213,5 +213,48 @@ POSTMORTEM 영구 10 룰 + 헌장 v1.1 + 영구 45+ 결정 정합 의무 유지.
 
 - master doc: `editor/ops/lab-v2-fresh-2026-05-09.md` (~4400 줄, Stage 0 ~ Stage 7 박제) — 본 사료와 함께 영구 보존
 - 사료 폴더: `cms-v2-plan/` 188 개 .md (영구 보존, v3/v4 정독 대상)
-- lab repo HEAD (폐기 시점): `dc73f1c`
+- lab repo HEAD (lab fresh v2 폐기 시점): `dc73f1c`
 - 옛 lab 코드 archive: GitHub repo history 에서 `dc73f1c` 이전 모두 보존 (force push X)
+
+---
+
+## ★ 2026-05-11 후속 작업 완료 (A-F 모두 완료)
+
+### A-E (lab fresh v2 폐기 + prod clone + lab-auth 신설) — 본 사료 신설 시점
+
+(위 본문 참조)
+
+### F (옛 환경 정리) — 2026-05-11 후반 완료
+
+| 단계 | 자원 | 결과 |
+|---|---|---|
+| F1 | KV `ttimes-editor-sessions` (b4c4e3c3..., legacy 8 keys) | ✅ wrangler delete |
+| F2 | KV `editor-sessions` (9e4f5bb9..., 옛 test 82 keys) | ✅ 사용자 대시보드 삭제 |
+| F3 | Worker `editor` (editor.ttimes.workers.dev) | ✅ 사용자 대시보드 삭제 (404 확인) |
+| F4 | Worker `ttimes-edit` (옛 죽음) | ✅ 사용자 대시보드 삭제 (404 확인) |
+| F5 | GitHub `ttimesvibe/ttimes-editor` | ✅ 사용자 GitHub 삭제 (404 확인) |
+
+검증 결과:
+- `editor.ttimes.workers.dev` → 404
+- `ttimes-edit.ttimes.workers.dev` → 404
+- `api.github.com/repos/ttimesvibe/ttimes-editor` → 404
+- ttimesvibe 계정 KV 목록 → `lab-sessions` + `AUTH` (lab 전용) 만 남음 (다른 KV 6개는 lab 무관 서비스)
+- `lab.ttimes.workers.dev` → 200 ✓
+- `lab-auth.ttimes.workers.dev` → 200 ✓
+
+★ 카니발 근원 모두 차단 + 옛 환경 완전 정리 완료. test 환경 = prod clone 단일 트리.
+
+### 부가 — lab repo 의 admin page 신설
+
+- `docs/admin/index.html` — prod `ttimesvibe/admin` 의 clone, AUTH_URL `lab-auth.ttimes.workers.dev` 변경
+- 첫 admin: `hjae@mt.co.kr` (KV 직접 박음, `mustChangePassword=true`)
+- URL: `https://ttimesvibe.github.io/lab/admin/`
+
+### 본 결정의 본질 (요약)
+
+> "2026-05-09 fresh v2 시도 (3 일) → 2026-05-11 라이브 검증 결과 prod 보다 못함 + PRD 정합 X 판단 → 사용자 명시 폐기 결정 → lab 인프라 (Worker / KV / GitHub repo / GitHub Pages) 보존 + application 코드만 prod editor clone 으로 교체 → lab-auth Worker 신설 + 카니발 근원 모두 차단 → 옛 ttimes-editor (test) 환경 5 자원 모두 정리 → **test 환경 = prod clone 단일 트리, 운영 1 + test 1 깔끔 분리** 상태 달성."
+
+다음 단계 (별 세션):
+1. 라이브 검증 (`ttimesvibe.github.io/lab/` + `/lab/admin/`)
+2. test 환경에서 신규 기능 실험 (prod 안전 + 같은 사용자 인프라)
+3. 안정화 후 prod (alleditor) 로 promote

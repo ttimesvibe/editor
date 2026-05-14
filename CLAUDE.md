@@ -12,13 +12,13 @@
 | 계정 | Account ID | 용도 |
 |---|---|---|
 | **ttimes6000** | `d556c524bda75cc7c5b5f13b6433ede7` | **프로드** (현 운영, Worker `alleditor`) |
-| **ttimesvibe** | `fb0a10864393158e940b149b3ead37f6` | **refactor-track 테스트** (Worker `ttimes-editor`, 신규 기능 선행 실험장) |
+| **ttimesvibe** | `fb0a10864393158e940b149b3ead37f6` | **test 환경** (Worker `lab` + `lab-auth`, prod 의 clone — 2026-05-11 재설계) |
 
 ### 왜 두 환경이 병행 운영되나 (중요)
 
 **둘 다 실제로 쓰이고 있음 — 테스트가 "죽은" 환경이 아님.**
 - **ttimes6000 `alleditor`** = 운영 — 전체 팀이 매일 쓰는 안정 버전 (리스트 뷰, 기존 dashboard).
-- **ttimesvibe `ttimes-editor`** = refactor-track 테스트 — Kanban 뷰, 역할 배정, 촬영 일정, "내 프로젝트만 보기" 같은 **신규 기능을 이쪽에 먼저 구현**해 테스터들이 돌려본 뒤 검증이 끝나면 prod(alleditor)로 promote.
+- **ttimesvibe `lab`** = test 환경 — prod editor (alleditor) 의 코드 clone, 같은 기능 + 인프라만 분리. 신규 기능을 lab 에 먼저 박고 안정화 후 prod 로 promote. (2026-05-11 재설계 — 옛 `ttimes-editor` 시도 폐기 후 prod clone 으로 전환)
 - 같은 사용자가 **양쪽에 동일/유사 프로젝트를 나란히 만들어** 비교하기도 함 ("김민정 6강" vs "김민정 6강 싱크" 같은 이름 중복). 공통 프로젝트의 updatedAt 이 test 쪽이 더 최신인 것도 이 때문 — 테스터가 Kanban 에서 같은 프로젝트를 만지는 중.
 
 **함의 (평상시)**:
@@ -63,8 +63,10 @@ npx -y wrangler kv key list --namespace-id=<id> --remote
 
 | id | title | 용도 | keys |
 |---|---|---|---:|
-| `9e4f5bb9cd294b86868e4b9d502adbcc` | **editor-sessions** (복수) | **refactor-track 테스트 Worker `ttimes-editor` 의 SESSIONS** — 활성 운영 | ~90 |
-| `b4c4e3c3944146cb856b2622fff59473` | ttimes-editor-sessions | **레거시** (refactor 이전 스키마 `save_*`, `session_index`, `shared_dict`, 더 이상 안 씀) | ~8 |
+| ~~`9e4f5bb9...`~~ | ~~editor-sessions~~ | ~~옛 test 환경 Worker `editor` 의 SESSIONS~~ | ✅ **2026-05-11 삭제** (lab-sessions 마이그레이션 완료) |
+| ~~`b4c4e3c3...`~~ | ~~ttimes-editor-sessions~~ | ~~레거시 refactor 이전 스키마~~ | ✅ **2026-05-11 삭제** |
+| `fbb8da8adcae4ee0a555abff66f798ac` | **lab-sessions** | **현 test Worker `lab` 의 SESSIONS** (★ 옛 editor-sessions 데이터 마이그레이션됨) | ~96 |
+| `b3cf948f8e7048dea7fd1427013d5545` | **AUTH** | **현 test Worker `lab-auth` 의 사용자 DB** (★ 2026-05-11 신설, prod auth-kv 와 분리) | 1+ |
 | `b91de13be69045e59941b1ff000ffa0a` | SESSIONS | 용도 불명 (generic name) | ? |
 | `fe10896854fb4fe994e85ecadd11079c` | hilight-sessions | 하이라이트 서비스 | ? |
 | `e996e428a46c48a0bd12d01cb1ea87fa` | modify-sessions | 수정 서비스 | ? |
@@ -113,18 +115,23 @@ npx -y wrangler kv key list --namespace-id=<id> --remote
 
 prod ↔ lab 코드 promote 는 **수동 port 작업** (cherry-pick 또는 수동 적용). 자동 sync X.
 
-### 옛 test 환경 (Phase 3 에서 정리 예정 — 사용자 명시 "맨 마지막")
+### 옛 test 환경 (★ 2026-05-11 모두 정리 완료)
 
-> 아래 영역은 **lab 신설 + 검증 완료 후 폐기 예정**. 그 동안은 활성 상태로 보존 (롤백 안전망).
+> ★ 2026-05-11: lab fresh v2 폐기 + prod clone 으로 test 환경 재설계 후 **F1-F5 모두 정리 완료**.
+> 아래 표는 영구 박제 (어떤 자원이 무엇이었는지 추적용).
 
-| 레벨 | 값 (옛 test, 폐기 예정) |
-|---|---|
-| Worker | `editor` (ttimesvibe) — URL `editor.ttimes.workers.dev`, 마지막 배포 5/5 |
-| Worker (구) | `ttimes-edit` (ttimesvibe) — 4/12 죽음, 500 응답 |
-| KV | `editor-sessions` (id `9e4f5bb9...`, 90 keys) — lab-sessions 으로 마이그레이션 후 폐기 |
-| KV (구) | `ttimes-editor-sessions` (id `b4c4e3c3...`, 8 keys, 레거시) |
-| GitHub | `ttimesvibe/ttimes-editor` (10 MB, 5/5 마지막 push, 사용자 결정 = 삭제) |
-| 로컬 | `ttimes-editor-test/` (사용자가 → `lab/` 으로 rename + 비움 — 콘텐츠 0) |
+| 레벨 | 값 (옛 test) | 상태 |
+|---|---|---|
+| Worker | `editor` (ttimesvibe) — URL `editor.ttimes.workers.dev` | ✅ 삭제 (404) |
+| Worker (구) | `ttimes-edit` (ttimesvibe) — 4/12 부터 죽음 | ✅ 삭제 (404) |
+| KV | `editor-sessions` (id `9e4f5bb9...`, 82 keys) | ✅ 삭제 (lab-sessions 마이그레이션 완료 + 7.5MB 백업 보존) |
+| KV (구) | `ttimes-editor-sessions` (id `b4c4e3c3...`, 8 keys, 레거시) | ✅ 삭제 |
+| GitHub | `ttimesvibe/ttimes-editor` (10 MB) | ✅ 삭제 (404) |
+| 로컬 | `ttimes-editor-test/` → `lab/` 으로 rename | 사용 중 (현 lab repo = prod clone) |
+
+★ 참조:
+- 정리 사유 + 단계: [`ops/POSTMORTEM_LAB_FRESH_DECOMMISSION_20260511.md`](./ops/POSTMORTEM_LAB_FRESH_DECOMMISSION_20260511.md)
+- 현 test 환경: **lab Worker (prod clone)** + **lab-auth Worker (별 인증)** + **lab-sessions / lab-auth AUTH KV** (★ prod 와 카니발 완전 차단)
 
 상세 정리 단계: `ops/lab-setup-2026-05-09.md` 의 "Phase 3" 섹션.
 
