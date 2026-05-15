@@ -766,12 +766,18 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
               const savedFullText = td.manuscript.fullText || msText;
               setFn(msName);
 
+              // ★ 0차 검토 KV 박제 fix (2026-05-15) — mount load 영역의 자동 생성 분기
+              //    이전 영역: setReviewData 호출 시점 = isInitialLoad.current=true → useEffect L843 skip
+              //    → dirty 마킹 X → 30s 자동저장 fire X → KV.review 영원히 빈 영역
+              //    → 다음 mount 영역의 stages filter (L716-718) 에서 review load X → 탭 비활성화 (닭-달걀)
+              //    fix: setReviewData 직후 명시 await PUT 박제 → worker meta.stages.review 자동 박제 → 다음 mount 영역 정상.
+              let newReviewData;
               if (savedParagraphs && savedHasTrackChanges) {
                 // ── 변경 추적 데이터로 0차 검토 정상 구성 ──
                 const reviewBlocks = parseBlocks(savedFullText);
                 const { blockStrikeRanges, deletedBlockIndices } = computeBlockStrikes(savedParagraphs, reviewBlocks, savedFullText);
                 const duration = calcDuration(reviewBlocks, new Set(deletedBlockIndices));
-                setReviewData({
+                newReviewData = {
                   hasTrackChanges: true,
                   deletedBlockIndices,
                   blockStrikeRanges,
@@ -780,7 +786,8 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
                   cleanTextChars: msText.length,
                   paragraphs: savedParagraphs,
                   cleanText: msText,
-                });
+                };
+                setReviewData(newReviewData);
                 // blocks는 cleanText 기준 — 1차 교정 이후 단계가 삭제 반영된 본문 사용
                 setBlocks(parseBlocks(msText));
               } else {
@@ -788,10 +795,13 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
                 const reviewBlocks = parseBlocks(msText);
                 const duration = calcDuration(reviewBlocks);
                 const paragraphs = savedParagraphs || msText.split('\n').map(line => [{ text: line, deleted: false }]);
-                setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: msText.length, paragraphs, cleanText: msText });
+                newReviewData = { hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: msText.length, paragraphs, cleanText: msText };
+                setReviewData(newReviewData);
                 setBlocks(reviewBlocks);
               }
               setTabWithFreshness("review");
+              // ★ 즉시 KV PUT — isInitialLoad 영역의 useEffect dirty skip 우회
+              try { await autoSaveToKV({ reviewData: newReviewData }); } catch (e) { console.warn("[review] auto PUT 실패:", e?.message); }
             } else {
               setTabWithFreshness(hasHl ? "guide" : c.blocks?.length > 0 ? "correction" : "correction");
             }
@@ -1479,9 +1489,17 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
         if(cfg.apiMode==="live"&&i<chs.length-1) await delay(1000);
       }
 
-      setDiffs(ad); setProg({p:100,l:"✅ 1차 교정 완료"});
+      // ★ _stableId 박제 의무 (2026-05-15) — chunk 영역에 blockIndex/posStart/posEnd/kind 필드 없어
+      //    worker merge.js 의 array_stable_id_union 영역이 fallback key "||||" 동일로 판단 → 모두 1개 압축 손실
+      //    각 chunk 에 고유 ID 박제하면 dedupe 정상 동작 (29개 → 29개 유지)
+      const adWithId = ad.map((d, i) => ({
+        ...d,
+        _stableId: d._stableId || `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+      }));
+      setDiffs(adWithId); setProg({p:100,l:"✅ 1차 교정 완료"});
       // 자동 KV 저장 (1차 교정 완료)
-      autoSaveToKV({ diffs: ad });
+      // ★ await 의무 (2026-05-15) — 누락 시 PUT 완료 전 탭 이동 → fresh fetch 가 빈 KV 영역으로 state 덮어쓰기 → diffs 손실
+      await autoSaveToKV({ diffs: adWithId });
     } catch(e) { setErr(e.message); setProg({p:0,l:""}); }
     finally { setBusy(false); }
   },[anal, blocks, cfg, autoSaveToKV]);
@@ -1849,11 +1867,16 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
 
           const duration = calcDuration(reviewBlocks, deletedBlockIndices);
           const cleanTextChars = cleanText.length;
-          setReviewData({ hasTrackChanges: true, deletedBlockIndices: [...deletedBlockIndices], blockStrikeRanges, duration, reviewBlocks, cleanTextChars, paragraphs: tcResult.paragraphs, cleanText });
+          // ★ 0차 검토 fix (2026-05-15) — setReviewData 호출 직후 await PUT 박제
+          //    누락 시 30s timer 영역 fire 안 되면 stages.review = false 유지 →
+          //    다음 mount 영역에서 review 탭 load X → 탭 비활성화 (닭-달걀 영역)
+          const newReviewData = { hasTrackChanges: true, deletedBlockIndices: [...deletedBlockIndices], blockStrikeRanges, duration, reviewBlocks, cleanTextChars, paragraphs: tcResult.paragraphs, cleanText };
+          setReviewData(newReviewData);
           // blocks는 cleanText 기준 — 0차 review는 reviewData.paragraphs로 독립 렌더
           setBlocks(parseBlocks(cleanText));
           setTabWithFreshness("review");
           setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
+          await autoSaveToKV({ reviewData: newReviewData });
           return;
         }
       } catch (e) {
@@ -1866,22 +1889,28 @@ function AuthenticatedApp({ authUser, onLogout, initialSessionId, onBackToDashbo
       const duration = calcDuration(reviewBlocks);
       const paragraphs = plainText.split('\n').map(line => [{ text: line, deleted: false }]);
       setFn(file.name);
-      setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: plainText.length, paragraphs, cleanText: plainText });
+      // ★ 0차 검토 fix — await PUT 박제 (L1871 영역과 동일)
+      const newReviewData = { hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: plainText.length, paragraphs, cleanText: plainText };
+      setReviewData(newReviewData);
       setBlocks(reviewBlocks);
       setTabWithFreshness("review");
       setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
+      await autoSaveToKV({ reviewData: newReviewData });
     } else {
       const text = await file.text();
       const reviewBlocks = parseBlocks(text);
       const duration = calcDuration(reviewBlocks);
       const paragraphs = text.split('\n').map(line => [{ text: line, deleted: false }]);
       setFn(file.name);
-      setReviewData({ hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: text.length, paragraphs, cleanText: text });
+      // ★ 0차 검토 fix — await PUT 박제 (L1871 영역과 동일)
+      const newReviewData = { hasTrackChanges: false, deletedBlockIndices: [], blockStrikeRanges: {}, duration, reviewBlocks, cleanTextChars: text.length, paragraphs, cleanText: text };
+      setReviewData(newReviewData);
       setBlocks(reviewBlocks);
       setTabWithFreshness("review");
       setDiffs([]); setHl([]); setHlStats(null); setGReady(false); setTermReview(false);
+      await autoSaveToKV({ reviewData: newReviewData });
     }
-  },[handleFile]);
+  },[handleFile, autoSaveToKV]);
 
   const fileRef = useRef(null);
   const [drag,setDrag] = useState(false);
