@@ -5,6 +5,32 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-15 — highlight.clips 삭제 부활 결함 봉합 (옵션 A: last_write_wins, lab cherry-pick)
+
+### 19. fix(merge): highlight.clips union → last_write_wins (★ 사용자 삭제 정합)
+
+- **증상**: highlight 탭에서 박스 삭제 후 새 박스 추가 시 삭제 박스 부활. fresh load 시 옛 박스 누적
+- **원인**: `worker/merge.js` 의 `array_stable_id_union` 영역 = 합집합 의미론. PUT body에서 빠진 항목도 KV에 보존 → 사용자 삭제 인식 X
+- **옛 앱 비교**: `ttimes-hilight/worker/index.js` L135 = 통째 PUT (last_write_wins). 단일 사용자 정상 동작 박제 — 통합 CMS 영역에서 union 도입 시 trade-off 박제 누락
+- **3회 발견 영역 패턴** — 같은 머지 함수에서 결함 3번 봉합:
+  - `9a6cef0` (2026-05-09) — fallbackKey 충돌 (1개로 압축) → id 분기 봉합
+  - 본 세션 #1 (2026-05-15) — _stableId 박제 (1개로 압축) → 같은 패턴 봉합
+  - 본 보고 (2026-05-15) — 삭제 부활 → ★ union 의미론 자체 결함
+- **fix 영역 (3 파일)**:
+  - `worker/merge.js` L65: `highlight.clips: { kind: "last_write_wins" }`
+  - `docs/src/utils/_mergeImpl.js` L62: 동일 변경 (클라/worker 정합)
+  - `worker/__tests__/mergeTabData.test.js`: 회귀 테스트 5 케이스 추가 (47 → 52 PASS)
+- **멀티유저 영역 정합**: last_write_wins + version + 409 + ConflictModal = ★ 옛 union 영역의 "조용한 합치기" 보다 사용자 의도 영역 명시 처리 (정합 강화)
+- **검증**:
+  - 테스트 52/52 PASS (옛 47 + 새 5)
+  - worker 배포: alleditor Version `d1bd8b21`
+- **잠재 영역 (미 fix)**: modify.cards / visualGuides / insertCuts / manualResources / guide.hl — 같은 array_stable_id_union 영역, 사용자 보고 X → 미 fix (사용자 명시 원칙)
+- **이미 KV 박제된 옛 좀비 박스**: 본 fix 후 사용자가 한 번 더 삭제하면 정합 박제. 영구 손실 X
+- **lab 검증**: lab commit `23301ae` (build hash 동일 영역, 사용자 재현 박제 ✓)
+- **상세 사후 박제 (lab repo)**: `ttimesvibe/lab` 의 `ops/POSTMORTEM_DATA_LOSS_20260515.md` §10
+
+---
+
 ## 2026-05-15 — 1차 교정 손실 + 0차 검토 봉합 (★ lab cherry-pick)
 
 ### 18. fix(data-loss): 1차 교정 diffs 손실 + 0차 검토 탭 죽음 봉합 (commit `5ec7b28`)
