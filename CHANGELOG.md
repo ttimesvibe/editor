@@ -5,6 +5,39 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-16 — 편집가이드 자료 탭 재도입 + 드롭다운 라벨 정합 (★ lab cherry-pick)
+
+### 20. feat(guide): 자료 탭 재도입 (C_user 키) + 블록 드롭다운 라벨 정합
+
+- **변경 영역 — 2 가지**:
+  1. 블록 드롭다운 라벨 "추가 삭제" → "자료" (BlockComponents.jsx L162) — 옛 영역의 다른 위치는 이미 "자료" 박제, 드롭다운만 잔존하던 라벨 비대칭 봉합
+  2. 자막 추가 폼에 "자료" 탭 재도입 (C_user 키) — 옛 영역 (dab4ec6 4/7 ~ 5e91d7c 4/14) 에 잠시 박제됐다가 제거된 자료 탭의 정합 재구축
+- **옛 자료 탭의 진짜 버그** — displayCat 의미론 충돌:
+  - BlockComponents L149: `type="C1" → effectiveCat="A" → "자막"` 강제 표시
+  - 단 옛 자막 추가 폼에서 사용자 자료에 type="C1" 박제 → 의도(자료)와 화면(자막) 불일치
+  - 본 fix = `C_user` 키 사용 → `effectiveCat="C" → "자료"` 정합
+- **dead 분기 발견** — C1 탭 UI는 제거됐지만 처리 분기 2 곳 잔존:
+  - App.jsx L1546 `type === "C1" ? "추가 삭제"` 분기
+  - GuideTab.jsx L352 `type==="C1"?"추가 삭제 내용"` 분기
+  - 본 fix는 분기 유지 (옛 KV 데이터 정합 보존) + C_user 분기 추가
+- **fix 영역 (3 파일)**:
+  - BlockComponents.jsx L162: 드롭다운 라벨 "추가 삭제" → "자료" (lab `85c4e4d`)
+  - GuideTab.jsx L329: 탭 `[A1, B2, C_user]` 추가
+  - GuideTab.jsx L352: placeholder C_user 분기 추가 (C1 분기 유지)
+  - App.jsx L1546: type_name C_user → "자료" 분기 추가 (C1 분기 유지)
+  - App.jsx L1540 newItem: `_stableId` 박제 (본 세션 #1 dedupe 충돌 봉합 패턴)
+- **검증**:
+  - lab 검증 박제 (hl=2 → 4 → 5 → 6 정상 증가, 머지 충돌 0, fresh load 정합)
+  - TypeBadge 매칭: 블록 드롭다운 + 강조자막 카드 + 자막 추가 폼 3 영역 모두 "자료" 표시 ✓
+- **KV 영역 호환성**:
+  - 옛 type="C1" 항목 = "자막" 표시 (옛 displayCat 의미론 보존)
+  - 옛 type_name="추가 삭제" 항목 = 그대로 보존
+  - 새 항목 (C_user) = 머지 시 _stableId 우선 박제, fallbackKey 충돌 0
+- **잠재 영역**: 옛 C1 항목을 "자료"로 보이게 하려면 사용자가 블록 드롭다운에서 수동 변환 의무 (자동 마이그레이션 X)
+- **lab 원천 commit**: `85c4e4d` (라벨) + `9bde89f` (자료 탭 재도입)
+
+---
+
 ## 2026-05-15 — highlight.clips 삭제 부활 결함 봉합 (옵션 A: last_write_wins, lab cherry-pick)
 
 ### 19. fix(merge): highlight.clips union → last_write_wins (★ 사용자 삭제 정합)
