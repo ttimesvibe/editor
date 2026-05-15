@@ -5,6 +5,42 @@ ttimes-editor 의 운영 변경 이력. 큐레이션된 형식 — 증상/원인
 
 ---
 
+## 2026-05-15 — 1차 교정 손실 + 0차 검토 봉합 (★ lab cherry-pick)
+
+### 18. fix(data-loss): 1차 교정 diffs 손실 + 0차 검토 탭 죽음 봉합 (commit `5ec7b28`)
+
+- **증상 A**: 1차 교정 완료 후 다른 탭 갔다 오면 빨간 줄 사라짐 (diffs 영역 손실)
+- **증상 B**: 새 프로젝트 + docx 업로드 → 0차 검토 활성화 → CMS 나갔다 다시 들어오면 0차 검토 탭 죽음
+
+- **원인 A** (★ 본질) — worker `array_stable_id_union` 머지의 `_stableId` 박제 코드 부재:
+  - 주석엔 "AI 생성 항목은 이미 _stableId 박혀있다" 명시, 실제론 박제 코드 0건
+  - `/correct` 응답 chunk 구조에 fallback key 필드 (`blockIndex/posStart/posEnd/kind`) 없음
+  - → 모든 diffs 가 fallback key `"||||"` 동일 → Map dedupe 로 1개 압축
+  - log 증거 (lab 검증): PUT `diffs=29` → fresh load `diffs=1`
+- **원인 B** (★ 본질) — mount load 자동 0차 검토 생성 분기 (L780/797) 의 `setReviewData` 호출 시점 = `isInitialLoad.current=true` → useEffect L843 dirty skip → KV.review 영원히 빈 → 다음 mount stages filter 에서 review fetch X → 탭 비활성화 (닭-달걀)
+- **부수 원인** — L1493 `autoSaveToKV({ diffs: ad })` await 누락 (race 잠재)
+
+- **수정 (5 영역, App.jsx 단일 파일)**:
+  - L1493: `await autoSaveToKV({ diffs: adWithId })`
+  - L1491: `ad.map((d,i) => ({...d, _stableId: ...}))` ★ 원인 A 봉합
+  - L1871/1888/1898: `onFileUpload` 영역 setReviewData 직후 `await autoSaveToKV({ reviewData })`
+  - L780/797: **mount load 자동 0차 검토 생성 영역** setReviewData 직후 `await autoSaveToKV({ reviewData })` ★ 원인 B 봉합
+
+- **검증** (lab 영역 박제):
+  - 1차 교정: `save PAYLOAD ... diffs=22 anal=Y` → `tabFresh loaded ... diffs=22 anal=Y` 정합 ✓
+  - 0차 검토: `save PAYLOAD review ...` → 다음 mount `load LOADED review ...` 정합 ✓
+
+- **잠재 영역** (미 fix, 사용자 명시 원칙 정합):
+  - L1714 하이라이트 / L1449 metadata: 같은 await 누락 패턴, 손실 보고 X
+  - 다른 AI 생성 항목 (`guide.hl` / `highlight.clips` / `visualGuides` 등): `_stableId` 박제 X. 단 fallback key 필드가 실 데이터에 박혀 손실 X (비대칭 정합)
+
+- **이미 죽은 옛 프로젝트** — 자동 회복 X (mount load 분기 조건 `correction.blocks 비어있음` 미충족). 사용자 명시 — 보류
+- **상세 사후 박제 (lab repo)**: `ttimesvibe/lab` 의 `ops/POSTMORTEM_DATA_LOSS_20260515.md`
+- **lab 원천 commit**: `e459696` ~ `fd38643` (5 fix), `63b070f` (lab 진단 log 제거 — prod 미박제)
+- **잠재 영역 발현 시 fix 패턴**: 같은 `await autoSaveToKV({ <field>: newData })` 패턴 적용. _stableId 박제는 chunk 구조의 fallback key 필드 부재 영역 한정 (다른 항목 영역 = 정합)
+
+---
+
 ## 2026-05-09 — lab 방향 전환 (코드 복사 → fresh v2 설계, 다 세션)
 
 ### 17. ops(lab): 방향 전환 — prod 코드 복사 → fresh v2 설계 (사료 전수 정독 기반)
